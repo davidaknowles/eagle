@@ -15,14 +15,21 @@ default.settings = function(){
        convergence.tolerance=10.0,
        random.effect.variance=1.0,
        learn.rev=T,
+       dependent.rev=F,
        allow.flips=F,
        learn.coeffs=T,
        trace=T)
 }
 
-run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace)
+run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace=T,dependent.rev=F)
 {
   s=default.settings()
+  if (dependent.rev){
+      s$normalised.depth=scale(unlist(lapply(n,sum)))
+      s$rep.slope=.6
+      s$rep.intercept=2.7
+  }
+  s$dependent.rev=dependent.rev
   s$max.iterations=max.its
   s$allow.flips=flips
   s$convergence.tolerance=tol
@@ -35,6 +42,8 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev
   s$learn.coeffs=T
   s$learn.rev=F
   s$random.effect.variance=res.null$random.effect.var
+  s$rep.slope=res.null$rep.slope
+  s$rep.intercept=res.null$rep.intercept
   res.full = run.vb(alt,n,x,s)
   log.like.ratios=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
   p=1.0-pchisq(log.like.ratios,df=1)
