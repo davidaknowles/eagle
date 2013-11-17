@@ -15,21 +15,29 @@ default.settings = function(){
        convergence.tolerance=10.0,
        random.effect.variance=1.0,
        learn.rev=T,
-       dependent.rev=F,
+       rev.model="global",
+       rep.global.rate=1.0,
+       rep.global.shape=1.0,
+       rep.slope=0.0,
+       rep.intercept=0.0,
        allow.flips=F,
        learn.coeffs=T,
        trace=T)
 }
 
-run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace=T,dependent.rev=F)
+run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace=T,rev.model="global")
 {
   s=default.settings()
-  if (dependent.rev){
-      s$normalised.depth=scale(unlist(lapply(n,sum)))
+  if (rev.model=="global"){
+      s$rev.model=as.integer(0)
+  } else if (rev.model=="regression") {
+      s$rev.model=as.integer(1)
       s$rep.slope=.6
       s$rep.intercept=2.7
+  } else if (rev.model=="local") {
+      s$rev.model=as.integer(2)
   }
-  s$dependent.rev=dependent.rev
+  s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
   s$max.iterations=max.its
   s$allow.flips=flips
   s$convergence.tolerance=tol
@@ -44,12 +52,51 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev
   s$random.effect.variance=res.null$random.effect.var
   s$rep.slope=res.null$rep.slope
   s$rep.intercept=res.null$rep.intercept
+  s$rep.global.rate=res.null$rep.global.rate
+  s$rep.global.shape=res.null$rep.global.shape
   res.full = run.vb(alt,n,x,s)
   log.like.ratios=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
   p=1.0-pchisq(log.like.ratios,df=1)
   q=p.adjust(p,method="fdr")
   list(p.values=p,q.values=q,res.full=res.full,res.null=res.null)
 }
+
+run.full.null = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace=T,rev.model="global")
+{
+  s=default.settings()
+  if (rev.model=="global"){
+      s$rev.model=as.integer(0)
+  } else if (rev.model=="regression") {
+      s$rev.model=as.integer(1)
+      s$rep.slope=.6
+      s$rep.intercept=2.7
+  } else if (rev.model=="local") {
+      s$rev.model=as.integer(2)
+  }
+  s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
+  s$max.iterations=max.its
+  s$allow.flips=flips
+  s$convergence.tolerance=tol
+  s$debug=debug
+  s$trace=trace
+  s$learn.coeffs=T
+  s$learn.rev=learn.rev
+  s$random.effect.variance=rev
+  res.full = run.vb(alt,n,x,s)
+  s$learn.coeffs=F
+  s$learn.rev=F
+  s$random.effect.variance=res.full$random.effect.var
+  s$rep.slope=res.full$rep.slope
+  s$rep.intercept=res.full$rep.intercept
+  s$rep.global.rate=res.full$rep.global.rate
+  s$rep.global.shape=res.full$rep.global.shape
+  res.null = run.vb(alt,n,x,s)
+  log.like.ratios=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
+  p=1.0-pchisq(log.like.ratios,df=1)
+  q=p.adjust(p,method="fdr")
+  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s)
+}
+
 
 run.perms = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,n.perms=10,learn.rev=T,rev=1.0)
 {
