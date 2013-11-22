@@ -7,6 +7,7 @@
 #define REV_GLOBAL 0
 #define REV_REGRESSION 1
 #define REV_LOCAL 2
+#define REV_LOCAL_REGRESSION 3
 
 using namespace std ;
 using namespace Rcpp ;
@@ -21,7 +22,7 @@ double log1plusexp(double x){
   return log(1.0+exp(x)); 
 }
 
-NumericVector twoByTwoSolve(NumericMatrix A, NumericVector x){
+NumericVector twoByTwoSolve(const NumericMatrix A, NumericVector x){
   double det = A(0,0)*A(1,1)-A(0,1)*A(1,0);
   NumericVector y(2);
   y[0]=(A(1,1)*x[0]-A(0,1)*x[1])/det; 
@@ -85,6 +86,13 @@ class Vbglmm {
  
   NumericVector rep_shapes;
   NumericVector rep_rates; 
+
+  // stuff for localreg
+  NumericVector delta_to_logrep_mp, delta_to_logrep_p; 
+  NumericVector logrep_mp, logrep_p; 
+
+  double rep_rep; 
+
   double global_rep_shape, global_rep_rate;   
   double random_effect_precision; 
   double rep_intercept, rep_slope; 
@@ -113,12 +121,12 @@ class Vbglmm {
     double Elog1plus_exp_g=.5*a*a*v+log1plusexp(m+(1.0-2.0*a)*v*.5); 
     // < log likelihood >
     lb+=(double)alt*m-(double)n*Elog1plus_exp_g; 
-    // < log normal > 
     double err = pred-m; 
     double Eerr2 = err*err+v; 
-    lb+=-.5*Erep*Eerr2-.5*log2pi+.5*Elogrep; 
+    // < log normal >  [note: cancelling log2pi terms]
+    lb+=-.5*Erep*Eerr2+.5*Elogrep; 
     // - <log q>
-    lb+=.5*(v+log(2.0*M_PI*v)); 
+    lb+=.5*(v+log(v)); 
     return lb; 
   }
   
@@ -136,6 +144,29 @@ class Vbglmm {
     }
     return lb; 
   }
+
+  double per_locus_bound_local_reg(double beta, double means, NumericVector &a, NumericVector &g_mean_prec, NumericVector &g_prec, NumericVector &alt, NumericVector &n, NumericVector &x, double log_rep_mp, double log_rep_p, double normalised_depth_here, NumericVector flips){
+    double lb=0.0; 
+    double rpred=rep_slope*normalised_depth_here+rep_intercept; 
+    double v=1.0/log_rep_p; 
+    double m=log_rep_mp*v; 
+    double err=rpred-m; 
+    double Eerr2 = err*err+v; 
+    // < log N(log local_rep; mx+c,v) > [calling log2pi]
+    lb+=-.5*rep_rep*Eerr2+.5*log(rep_rep); 
+    // - <log q>
+    lb+=.5*(v+log(v)); 
+    double rep_shape=fit_gamma(.5*v); 
+    double rep_rate=rep_shape/exp(m+.5*v);           
+    double Erep=exp(m+.5*v); 
+    double Elogrep=m; 
+    for (int sample_index=0;sample_index<n.size();sample_index++){
+      double pred=(beta*x[sample_index]+means)*flips[sample_index]; 
+      lb+=local_bound(pred, g_prec[sample_index], g_mean_prec[sample_index], a[sample_index], Erep, Elogrep, alt[sample_index], n[sample_index]); 
+    }
+    return lb; 
+  }
+
 
   double per_locus_bound(double beta, double means, NumericVector &a, NumericVector &g_mean_prec, NumericVector &g_prec, NumericVector &alt, NumericVector &n, NumericVector &x, double random_effect_precision, NumericVector flips){
     double lb=0.0; 
@@ -160,6 +191,8 @@ class Vbglmm {
     case REV_LOCAL:
       return per_locus_bound_local_rep(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], rep_shapes[locus_index], rep_rates[locus_index], global_rep_shape, global_rep_rate, flips[locus_index]); 
       break; 
+    case REV_LOCAL_REGRESSION:
+      return per_locus_bound_local_reg(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], logrep_mp[locus_index], logrep_p[locus_index], normalised_depth[locus_index], flips[locus_index]); 
     }
   }
 
@@ -170,6 +203,14 @@ class Vbglmm {
     }
     return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
   }
+
+double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, vector<NumericVector > &flips) {
+    int num_loci = n.size(); 
+    for (int locus_index=0;locus_index<num_loci;locus_index++){
+      lower_bounds[locus_index]=per_locus_bound_local_reg(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], logrep_mp[locus_index], logrep_p[locus_index], normalised_depth[locus_index], flips[locus_index]); 
+    }
+    return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
+}
     
   double lower_bound(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, double random_effect_precision, vector<NumericVector > &flips) {
   int num_loci = n.size(); 
@@ -207,18 +248,22 @@ class Vbglmm {
     
     double x_ns=x[locus_index][sample_index];
     double regression_mean=(beta[locus_index]*x_ns+means[locus_index])*flips[locus_index][sample_index]; 
-    double old_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, alt[locus_index][sample_index], n[locus_index][sample_index]); 
     double v=1.0/g_prec[locus_index][sample_index]; 
     double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
     double a_ns=a[locus_index][sample_index]; 
     double sig=logistic(m+(1.0-2.0*a_ns)*v*.5);
     double old_prec_f=prec_f[locus_index][sample_index]; 
-    double old_mean_prec_f=mean_prec_f[locus_index][sample_index]; 
-	
+    double old_mean_prec_f=mean_prec_f[locus_index][sample_index]; 	
     double pf=n[locus_index][sample_index]*sig*(1.0-sig); 
     double mpf=m*pf+alt[locus_index][sample_index]-n[locus_index][sample_index]*sig; 
-
-    // update q(g)
+    double old_lb; 
+    if (debug) old_lb=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, alt[locus_index][sample_index], n[locus_index][sample_index]);
+    // update q(g) based on changes to rep and regression model (i.e. beta/mean)
+    g_prec[locus_index][sample_index]=local_rep+old_prec_f;
+    g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f; 
+    double old_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, alt[locus_index][sample_index], n[locus_index][sample_index]); 
+    if (debug && (old_lb > (old_local_bound+0.001))) cout << "Warning: updating message from normal to g lowered lb, old: " << old_lb << " new: " << old_local_bound << endl; 
+    // update q(g) [NB: this is still correct for random q(rep)]
     g_prec[locus_index][sample_index]=local_rep+pf;
     g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+mpf; 
 	
@@ -230,7 +275,7 @@ class Vbglmm {
       g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+step*mpf+(1.0-step)*old_mean_prec_f;
       new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, alt[locus_index][sample_index], n[locus_index][sample_index]); 
       if (step<0.000001){
-	//cout << "Step is very small" << endl;
+	if (debug) cout << "Step is very small" << endl;
 	g_prec[locus_index][sample_index]=local_rep+old_prec_f;
 	g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f;
 	new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep,  alt[locus_index][sample_index], n[locus_index][sample_index]); 
@@ -277,7 +322,12 @@ class Vbglmm {
     case REV_LOCAL:
       local_rep = rep_shapes[locus_index]/rep_rates[locus_index]; 
       log_local_rep = ::Rf_digamma(rep_shapes[locus_index])-log(rep_rates[locus_index]); 
-      break; 
+    case REV_LOCAL_REGRESSION:
+      double v=1.0/logrep_p[locus_index] ;
+      double m=logrep_mp[locus_index]*v; 
+      local_rep = exp(m+.5*v); 
+      log_local_rep = m; 
+      break;
     }
     double x_g=0.0, g_1=0.0; 
     double xx=0.0,x1=0.0;
@@ -329,9 +379,39 @@ class Vbglmm {
     }
     total_terms[locus_index]=num_samples; 
     //    cout << expected_err[locus_index] << endl;
-    if (rev_model==REV_LOCAL){
+    switch (rev_model){
+    case REV_LOCAL:
       rep_shapes[locus_index]=global_rep_shape+.5*num_samples; 
       rep_rates[locus_index]=global_rep_rate+.5*expected_err[locus_index]; 
+      break; 
+    case REV_LOCAL_REGRESSION:
+      double v=1.0/logrep_p[locus_index] ;
+      double m=logrep_mp[locus_index]*v; 
+      double b=.5*expected_err[locus_index]; 
+      double aMinus1=.5*num_samples; 
+      double pf=b*exp(m+.5*v); 
+      double mpf=m*pf+aMinus1-pf; 
+      double old_pf=delta_to_logrep_p[locus_index]; 
+      double old_mpf=delta_to_logrep_mp[locus_index]; 
+      double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
+      double step=1.0; 
+      double old_lb=per_locus_bound(locus_index); 
+      logrep_mp[locus_index]=pred_mean*rep_rep+mpf; 
+      logrep_p[locus_index]=rep_rep+pf; 
+      while (per_locus_bound(locus_index) < old_lb){
+	step*=0.5; 
+	logrep_mp[locus_index]=pred_mean*rep_rep+step*mpf+(1.0-step)*old_mpf; 
+	logrep_p[locus_index]=rep_rep+step*pf+(1.0-step)*old_pf; 
+	if (step < 0.00001){
+	  if (debug) cout << "Warning: step size is very small updating q(log rep)" << endl; 
+	  step=0.0;
+	  logrep_mp[locus_index]=pred_mean*rep_rep+old_mpf; 
+	  logrep_p[locus_index]=rep_rep+old_pf;
+	  break;
+	}
+      }
+      delta_to_logrep_mp[locus_index]=step*mpf+(1.0-step)*old_mpf; 
+      delta_to_logrep_p[locus_index]=step*pf+(1.0-step)*old_pf; 
     }
 
   }
@@ -396,7 +476,48 @@ class Vbglmm {
 	  }
 
 	}
+	break; 
+      case REV_LOCAL_REGRESSION:
+	if (debug) 
+	  old_lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
+	
+	NumericMatrix xx(2,2);
+	NumericVector xm(2); 
+	double Eerr2=0; 
+	for (int locus_index=0;locus_index<num_loci;locus_index++){
+	  double v=1.0/logrep_p[locus_index];
+	  double m=logrep_mp[locus_index]*v; 
+	  xx(0,0)+=(normalised_depth[locus_index]*normalised_depth[locus_index]); 
+	  xx(0,1)+=normalised_depth[locus_index];
+	  xm[0]+=normalised_depth[locus_index]*m; 
+	  xm[1]+=m; 
+	}
+	xx(1,0)=xx(0,1); 
+	xx(1,1)=(double)num_loci; 
+	NumericVector temp=twoByTwoSolve(xx,xm); 
+	rep_slope=temp[0];
+	rep_intercept=temp[1];
+	if (isnan(rep_slope)) {
+	  cout << xx(0,0) << " " << xx(1,0) << " " << xx(1,1) << " " << xm[0] << " " << xm[1] << endl ;
+	  throw 1; 
+	}
+	for (int locus_index=0;locus_index<num_loci;locus_index++){
+	  double v=1.0/logrep_p[locus_index];
+	  double m=logrep_mp[locus_index]*v; 
+	  double pred=rep_slope*normalised_depth[locus_index]+rep_intercept; 
+	  double err=pred-m; 
+	  Eerr2+=err*err+v; 
+	}
+	rep_rep=(double)num_loci/Eerr2; 
+	for (int locus_index=0;locus_index<num_loci;locus_index++){
+	  double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
+	  logrep_mp[locus_index]=pred_mean*rep_rep+delta_to_logrep_mp[locus_index]; 
+	  logrep_p[locus_index]=rep_rep+delta_to_logrep_p[locus_index]; 
+	}
+	lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
+
       }
+      
       if (!isfinite(random_effect_precision)) { cerr << "err " << expected_err << " n " << total_terms << endl; throw 1; }
       
       if (debug && ((lb+1.0e-3)<old_lb)) cout << "Warning: lb got worse after optimizing random effect var, old:" << old_lb << " new:" << lb << endl; 
@@ -410,6 +531,10 @@ class Vbglmm {
 	break;
       case REV_LOCAL:
 	lb = lower_bound_local_rep(beta,means,a,g_mean_prec,g_prec,alt,n,x,rep_shapes,rep_rates,global_rep_shape,global_rep_rate,flips); 
+	break;
+      case REV_LOCAL_REGRESSION:
+	lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
+	break;
       }
     }
     return lb; 
@@ -429,12 +554,16 @@ public:
 	case REV_GLOBAL:
 	  cout << " re_var: " << 1.0/random_effect_precision;
 	  break;
+	case REV_LOCAL:
+	  {
+	    double sd = (global_rep_shape > 2.0) ? (global_rep_rate / ( (global_rep_shape - 1.0) * sqrt( global_rep_shape - 2.0 ) )) : 0.0; 
+	    cout << " rep prior=G( " << global_rep_shape << "," << global_rep_rate << ")~=" << global_rep_rate / global_rep_shape << "+/-" << sd; 
+	  }
+	  break;
+	case REV_LOCAL_REGRESSION:
+	  cout << " rep_rep " << rep_rep ; 
 	case REV_REGRESSION:
 	  cout << " rep_slope: " << rep_slope << " rep_intercept: " << rep_intercept;
-	  break;
-	case REV_LOCAL:
-	  double sd = (global_rep_shape > 2.0) ? (global_rep_rate / ( (global_rep_shape - 1.0) * sqrt( global_rep_shape - 2.0 ) )) : 0.0; 
-	  cout << " rep prior=G( " << global_rep_shape << "," << global_rep_rate << ")~=" << global_rep_rate / global_rep_shape << "+/-" << sd; 
 	  break;
 	}	
 	cout << " beta sd " << sqrt(beta_l2/(double)num_loci) << " mean sd " << sqrt(means_l2/(double)num_loci) << " lb: " << lb << endl; 
@@ -520,6 +649,7 @@ public:
 			_("flips") = flips,
 			_("rep.slope") = rep_slope,
 			_("rep.intercept") = rep_intercept,
+			_("rep.rep")=rep_rep, 
 			_("rep.shapes") = rep_shapes,
 			_("rep.rates") = rep_rates, 
 			_("random.effect.variance") = 1.0/random_effect_precision,
@@ -556,19 +686,25 @@ public:
     standard_errors=clone(temp); 
     means=clone(temp); 
     lower_bounds=clone(temp); 
-
+    delta_to_logrep_p=clone(temp); 
+    delta_to_logrep_mp=clone(temp); 
+    logrep_p=clone(temp); 
+    logrep_mp=clone(temp); 
+    
     switch (rev_model){
     case REV_GLOBAL:
       random_effect_precision=1.0/as<double>(settings_list["random.effect.variance"]); 
       break; 
+    case REV_LOCAL:
+      global_rep_rate=as<double>(settings_list["rep.global.rate"]); 
+      global_rep_shape=as<double>(settings_list["rep.global.shape"]); 
+      break;
+    case REV_LOCAL_REGRESSION: // fall through is delibrate
+      rep_rep=as<double>(settings_list["rep.rep"]); 
     case REV_REGRESSION:
       normalised_depth=as<NumericVector>(settings_list["normalised.depth"]); 
       rep_intercept=as<double>(settings_list["rep.intercept"]) ; 
       rep_slope=as<double>(settings_list["rep.slope"]); 
-      break;
-    case REV_LOCAL:
-      global_rep_rate=as<double>(settings_list["rep.global.rate"]); 
-      global_rep_shape=as<double>(settings_list["rep.global.shape"]); 
       break;
     }
 
@@ -592,9 +728,16 @@ public:
       prec_f.push_back(pf); 
       NumericVector f(num_samples,1.0); 
       flips.push_back(f); 
-      if (rev_model==REV_LOCAL){
+      switch (rev_model){
+      case REV_LOCAL:
 	rep_shapes[locus_index]=global_rep_shape; 
 	rep_rates[locus_index]=global_rep_rate; 
+	break; 
+      case REV_LOCAL_REGRESSION:
+	double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
+	logrep_mp[locus_index]=pred_mean*rep_rep; 
+	logrep_p[locus_index]=rep_rep;
+	break;
       }
       for (int sample_index=0;sample_index<num_samples;sample_index++){ // TODO: probably don't need to do this? 
 	g_mean_prec[locus_index][sample_index]=0.0; 
