@@ -21,12 +21,14 @@ default.settings = function(){
        rep.slope=0.0,
        rep.intercept=0.0,
        rep.rep=1.0,
-       allow.flips=F,
+       flips.setting=0,
+       flips.logodds.prior=-2.0,
+       learn.flips.prior=T, 
        learn.coeffs=T,
        trace=T)
 }
 
-run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F)
+run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F)
 {
   s=default.settings()
   if (rev.model=="global"){
@@ -37,8 +39,20 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev
       s$rep.intercept=2.7
   } else if (rev.model=="local") {
       s$rev.model=as.integer(2)
+  } else {
+      error("Invalid random effect variance model: options are global, local, regression, local.regression")
   }
   if (rev.model=="local.regression") s$rev.model=as.integer(3)
+  if (flips == "none"){
+      s$flips.setting=0
+  } else if (flips == "hard"){
+      s$flips.setting=1
+  } else if (flips == "soft"){
+      s$flips.setting=2
+  } else {
+      error("Invalid setting of flips: options are none, hard, soft")
+  }
+      
   s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
   s$max.iterations=max.its
   s$allow.flips=flips
@@ -47,10 +61,13 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,learn.rev=T,rev
   s$debug=debug
   s$trace=trace
   s$learn.coeffs=!null.first
+  s$learn.flips.prior=s$learn.coeffs
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
   res.first = run.vb(alt,n,x,s)
   s$learn.coeffs=null.first
+  s$learn.flips.prior=null.first
+  s$flips.logodds.prior=res.first$flips.logodds.prior
   s$learn.rev=F
   s$random.effect.variance=res.first$random.effect.var
   s$rep.slope=res.first$rep.slope
