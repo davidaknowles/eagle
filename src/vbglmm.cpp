@@ -617,10 +617,10 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
     }
 
     if (learn_flips_prior){ // note: this should work for hard assignment too
-      double sumQ=0.0,total=0.0;
+      double sumQ=0.0,total=0.0,minf=0.0, maxf=0.0;
       for (int locus_index=0;locus_index<num_loci;locus_index++){
 	sumQ += sum(flips[locus_index]); 
-	total += (double)flips.size(); 
+	total += (double)flips[locus_index].size(); 
       }
       sumQ = .5*(total-sumQ); 
       flips_log_odds_prior = log(sumQ) - log(total - sumQ);
