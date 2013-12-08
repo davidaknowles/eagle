@@ -24,11 +24,10 @@ default.settings = function(){
        flips.setting=0,
        flips.logodds.prior=-2.0,
        learn.flips.prior=T, 
-       learn.coeffs=T,
        trace=T)
 }
 
-run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F)
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F)
 {
   s=default.settings()
   if (rev.model=="global"){
@@ -64,8 +63,9 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=
   s$learn.flips.prior=s$learn.coeffs
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
-  res.first = run.vb(alt,n,x,s)
-  s$learn.coeffs=null.first
+  # run first model -------------
+  res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
+  
   s$learn.flips.prior=null.first
   s$flips.logodds.prior=res.first$flips.logodds.prior
   s$learn.rev=F
@@ -75,7 +75,9 @@ run.all = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=
   s$rep.intercept=res.first$rep.intercept
   s$rep.global.rate=res.first$rep.global.rate
   s$rep.global.shape=res.first$rep.global.shape
-  res.second = run.vb(alt,n,x,s)
+
+  # run second model --------------
+  res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
   if (null.first){
       res.full=res.second
       res.null=res.first

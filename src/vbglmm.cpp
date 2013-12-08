@@ -1,3 +1,4 @@
+#include <Eigen/Dense>
 #include "vbglmm.h"
 #include <vector> 
 #include <math.h> 
@@ -15,6 +16,7 @@
 
 using namespace std ;
 using namespace Rcpp ;
+using namespace Eigen ;
 
 double log2pi = log(2.0*M_PI); 
  
@@ -59,6 +61,7 @@ double fit_gamma(NumericVector &shapes, NumericVector &rates, double &rate){
     meanLogP+=::Rf_digamma(shapes[i])-log(rates[i]); 
   }
   meanP /= (double)N;
+
   meanLogP /= (double)N; 
   double shape=fit_gamma( log(meanP) - meanLogP ); 
   rate = shape / meanP; 
@@ -74,6 +77,16 @@ double lb_gamma(NumericVector &shapes, NumericVector &rates, double shape, doubl
   }
   return (shape-1.0)*meanLogP-rate*meanP+(double)N*(shape*log(rate)-::Rf_lgammafn(shape)); 
 }
+
+NumericMatrix outer(NumericVector &x){
+  int n=x.size(); 
+  NumericMatrix res(n,n); 
+  for (int i=0; i<n; i++)
+    for (int j=0; j<n; j++)
+      res(i,j)=x[i]*x[j];
+  return res; 
+}
+
 
 class Vbglmm {
 
@@ -102,9 +115,8 @@ class Vbglmm {
   double random_effect_precision; 
   double rep_intercept, rep_slope; 
 
-  NumericVector beta; // coefficients
+  vector<NumericVector> beta; // coefficients
   NumericVector standard_errors; 
-  NumericVector means; 
   NumericVector lower_bounds; // lower bound on the log likehood per locus
   
   vector<NumericVector> a; // part of the variational approximation for the logistic factor
@@ -119,25 +131,26 @@ class Vbglmm {
   // C++ structure
   vector<NumericVector> alt; // counts of alternative SNP
   vector<NumericVector> n; // total reads mappable to either allele at each locus for each individual
-  vector<NumericVector> x; // covariate
+  //vector<vector<NumericVector> > x; // covariate
+  vector<NumericMatrix> x; 
 
-  double local_bound(double pred, double g_prec, double g_mean_prec, double a, double Erep, double Elogrep, double flip, double flips_log_odds, int alt, int n){
+  double local_bound(int locus_index, int sample_index, double pred, double Erep, double Elogrep){
     double lb=0.0;
     double p2_var_flip=0.0;
     if (flips_setting == FLIPS_SOFT){
-      double flip_prob=.5*(1.0-flip); 
+      double flip_prob=.5*(1.0-flips[locus_index][sample_index]); 
       // entropy TODO: more numerically stable to use log odds? 
       lb -= flip_prob*log(flip_prob)+(1.0-flip_prob)*log(1.0-flip_prob); 
       //if (isnan(lb)) { cout << flip_prob << " " << flips_log_odds << endl; throw 1; }
-      lb += flips_log1minusP + flip_prob * flips_log_odds_prior; 
-      double p2=pred/flip; // TODO: just pass in bx+m rather than pred... 
+      lb += flips_log1minusP + flip_prob * flips_log_odds_prior;
+      double p2=pred/flips[locus_index][sample_index]; // TODO: just pass in bx+m rather than pred... 
       p2_var_flip=p2*p2*4.0*flip_prob*(1.0-flip_prob); 
     }
-    double v=1.0/g_prec; 
-    double m=g_mean_prec*v; 
-    double Elog1plus_exp_g=.5*a*a*v+log1plusexp(m+(1.0-2.0*a)*v*.5); 
+    double v=1.0/g_prec[locus_index][sample_index]; 
+    double m=g_mean_prec[locus_index][sample_index]*v; 
+    double Elog1plus_exp_g=.5*a[locus_index][sample_index]*a[locus_index][sample_index]*v+log1plusexp(m+(1.0-2.0*a[locus_index][sample_index])*v*.5); 
     // < log likelihood >
-    lb+=(double)alt*m-(double)n*Elog1plus_exp_g; 
+    lb+=(double)alt[locus_index][sample_index]*m-(double)n[locus_index][sample_index]*Elog1plus_exp_g; 
     double err = pred-m; 
     double Eerr2 = err*err+v+p2_var_flip; 
     // < log normal >  [note: cancelling log2pi terms]
@@ -148,129 +161,56 @@ class Vbglmm {
     return lb; 
   }
 
-  double no_entropy(double pred, double g_prec, double g_mean_prec, double a, double Erep, double Elogrep, double flip, double flips_log_odds, int alt, int n){
-    double lb=0.0;
-    double p2_var_flip=0.0;
-    if (flips_setting == FLIPS_SOFT){
-      double flip_prob=.5*(1.0-flip); 
-      lb += flips_log1minusP + flip_prob * flips_log_odds_prior; 
-      p2_var_flip=pred*pred*4.0*flip_prob*(1.0-flip_prob); 
-    }
-    double v=1.0/g_prec; 
-    double m=g_mean_prec*v; 
-    double Elog1plus_exp_g=.5*a*a*v+log1plusexp(m+(1.0-2.0*a)*v*.5); 
-    // < log likelihood >
-    lb+=(double)alt*m-(double)n*Elog1plus_exp_g; 
-    double err = pred-m; 
-    double Eerr2 = err*err+v+p2_var_flip; 
-    // < log normal >  [note: cancelling log2pi terms]
-    lb+=-.5*Erep*Eerr2+.5*Elogrep; 
-    // - <log q>
-    lb+=.5*(v+log(v)); 
-    if (isnan(lb)) throw 1; 
-    return lb; 
-  }
-
-  
-  double per_locus_bound_local_rep(double beta, double means, NumericVector &a, NumericVector &g_mean_prec, NumericVector &g_prec, NumericVector &alt, NumericVector &n, NumericVector &x, double rep_shape, double rep_rate, double global_rep_shape, double global_rep_rate, NumericVector &flips, NumericVector &flips_log_odds){
+  double per_locus_bound(int locus_index)
+  {
     double lb=0.0; 
-    double Erep=rep_shape/rep_rate; 
-    double Elogrep=::Rf_digamma(rep_shape)-log(rep_rate); 
-    // < log G(local_rep; a,b) >
-    lb+=(global_rep_shape-1.0)*Elogrep + global_rep_rate * Erep + global_rep_shape * log(global_rep_rate) - ::Rf_lgammafn(global_rep_shape); 
-    // - < log q >
-    lb-= (rep_shape-1.0)*::Rf_digamma(rep_shape)+log(rep_rate)-rep_shape-::Rf_lgammafn(rep_shape); 
-    for (int sample_index=0;sample_index<n.size();sample_index++){
-      double pred=(beta*x[sample_index]+means)*flips[sample_index];
-      lb+=local_bound(pred, g_prec[sample_index], g_mean_prec[sample_index], a[sample_index], Erep, Elogrep, flips[sample_index], flips_log_odds[sample_index], alt[sample_index], n[sample_index]); 
-    }
-    return lb; 
-  }
-
-  double per_locus_bound_local_reg(double beta, double means, NumericVector &a, NumericVector &g_mean_prec, NumericVector &g_prec, NumericVector &alt, NumericVector &n, NumericVector &x, double log_rep_mp, double log_rep_p, double normalised_depth_here, NumericVector &flips, NumericVector &flips_log_odds){
-    double lb=0.0; 
-    double rpred=rep_slope*normalised_depth_here+rep_intercept; 
-    double v=1.0/log_rep_p; 
-    double m=log_rep_mp*v; 
-    double err=rpred-m; 
-    double Eerr2 = err*err+v; 
-    // < log N(log local_rep; mx+c,v) > [calling log2pi]
-    lb+=-.5*rep_rep*Eerr2+.5*log(rep_rep); 
-    // - <log q>
-    lb+=.5*(v+log(v)); 
-    double rep_shape=fit_gamma(.5*v); 
-    double rep_rate=rep_shape/exp(m+.5*v);           
-    double Erep=exp(m+.5*v); 
-    double Elogrep=m; 
-    for (int sample_index=0;sample_index<n.size();sample_index++){
-      double pred=(beta*x[sample_index]+means)*flips[sample_index]; 
-      lb+=local_bound(pred, g_prec[sample_index], g_mean_prec[sample_index], a[sample_index], Erep, Elogrep, flips[sample_index], flips_log_odds[sample_index], alt[sample_index], n[sample_index]); 
-    }
-    return lb; 
-  }
-
-
-  double per_locus_bound(double beta, double means, NumericVector &a, NumericVector &g_mean_prec, NumericVector &g_prec, NumericVector &alt, NumericVector &n, NumericVector &x, double random_effect_precision, NumericVector &flips, NumericVector &flips_log_odds){
-    double lb=0.0; 
-    for (int sample_index=0;sample_index<n.size();sample_index++){
-      double pred=(beta*x[sample_index]+means)*flips[sample_index]; 
-      lb+=local_bound(pred, g_prec[sample_index], g_mean_prec[sample_index], a[sample_index], random_effect_precision, log(random_effect_precision), flips[sample_index], flips_log_odds[sample_index], alt[sample_index], n[sample_index]); 
-    }
-    return lb; 
-  }
-
-  double per_locus_bound(int locus_index){
-    switch( rev_model ){
+    double Erep, Elogrep; 
+    switch (rev_model){
     case REV_GLOBAL:
-      return per_locus_bound(beta[locus_index], means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], random_effect_precision, flips[locus_index], flips_log_odds[locus_index]); 
+      Erep = random_effect_precision; 
+      Elogrep = log(Erep); 
+      break; 
     case REV_REGRESSION:
-      {
-	double log_local_rep = rep_slope * normalised_depth[locus_index] + rep_intercept; 
-	double local_rep = exp( log_local_rep ); 
-	return per_locus_bound(beta[locus_index], means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], local_rep, flips[locus_index], flips_log_odds[locus_index]); 
-      }
+      Elogrep = rep_slope * normalised_depth[locus_index] + rep_intercept; 
+      Erep = exp( Elogrep ); 
       break; 
     case REV_LOCAL:
-      return per_locus_bound_local_rep(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], rep_shapes[locus_index], rep_rates[locus_index], global_rep_shape, global_rep_rate, flips[locus_index], flips_log_odds[locus_index]); 
-      break; 
+      Erep = rep_shapes[locus_index]/rep_rates[locus_index]; 
+      Elogrep = ::Rf_digamma(rep_shapes[locus_index])-log(rep_rates[locus_index]); 
+      // < log G(Erep; a,b) >
+      lb+=(global_rep_shape-1.0)*Elogrep + global_rep_rate * Erep + global_rep_shape * log(global_rep_rate) - ::Rf_lgammafn(global_rep_shape); 
+      // - < log q >
+      lb-= (rep_shapes[locus_index]-1.0)*::Rf_digamma(rep_shapes[locus_index])+log(rep_rates[locus_index])-rep_shapes[locus_index]-::Rf_lgammafn(rep_shapes[locus_index]); 
+      break;
     case REV_LOCAL_REGRESSION:
-      return per_locus_bound_local_reg(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], logrep_mp[locus_index], logrep_p[locus_index], normalised_depth[locus_index], flips[locus_index], flips_log_odds[locus_index]); 
+      double v=1.0/logrep_p[locus_index] ;
+      double m=logrep_mp[locus_index]*v; 
+      Erep = exp(m+.5*v); 
+      Elogrep = m; 
+      double rpred=rep_slope*normalised_depth[locus_index]+rep_intercept; 
+      double err=rpred-m; 
+      double Eerr2 = err*err+v; 
+      // < log N(log local_rep; mx+c,v) > [cancelling log2pi]
+      lb+=-.5*rep_rep*Eerr2+.5*log(rep_rep); 
+      // - <log q>
+      lb+=.5*(v+log(v)); 
+      break;
     }
+
+    for (int sample_index=0;sample_index<alt[locus_index].size();sample_index++){
+      double pred=sum(beta[locus_index]*x[locus_index]( sample_index, _ ))*flips[locus_index][sample_index];
+      lb+=local_bound(locus_index, sample_index, pred, Erep, Elogrep); 
+    }
+    return lb; 
   }
 
-  double lower_bound_local_rep(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, NumericVector &rep_shapes, NumericVector &rep_rates, double global_rep_shape, double global_rep_rate, vector<NumericVector > &flips) {
-    int num_loci = n.size(); 
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      lower_bounds[locus_index]=per_locus_bound_local_rep(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], rep_shapes[locus_index], rep_rates[locus_index], global_rep_shape, global_rep_rate, flips[locus_index], flips_log_odds[locus_index]); 
-    }
+  double lower_bound(){
+    int num_loi = n.size(); 
+    for (int locus_index=0;locus_index<num_loci;locus_index++)
+      lower_bounds[locus_index]=per_locus_bound(locus_index); 
     return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
   }
 
-double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, vector<NumericVector > &flips) {
-    int num_loci = n.size(); 
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      lower_bounds[locus_index]=per_locus_bound_local_reg(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], logrep_mp[locus_index], logrep_p[locus_index], normalised_depth[locus_index], flips[locus_index], flips_log_odds[locus_index]); 
-    }
-    return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
-}
-    
-  double lower_bound(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, double random_effect_precision, vector<NumericVector > &flips) {
-  int num_loci = n.size(); 
-  for (int locus_index=0;locus_index<num_loci;locus_index++){
-    lower_bounds[locus_index]=per_locus_bound(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], random_effect_precision, flips[locus_index], flips_log_odds[locus_index]); 
-  }
-  return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
-  }    
-  
-  double lower_bound(NumericVector &beta, NumericVector &means, vector<NumericVector> &a, vector<NumericVector> &g_mean_prec, vector<NumericVector> &g_prec, vector<NumericVector> &alt, vector<NumericVector> &n, vector<NumericVector> &x, double rep_slope, double rep_intercept, NumericVector &normalised_depth, vector<NumericVector > &flips) {
-    int num_loci = n.size(); 
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      double local_rep= exp( rep_slope * normalised_depth[locus_index] + rep_intercept );
-      lower_bounds[locus_index]=per_locus_bound(beta[locus_index],means[locus_index], a[locus_index], g_mean_prec[locus_index], g_prec[locus_index], alt[locus_index], n[locus_index], x[locus_index], local_rep, flips[locus_index], flips_log_odds[locus_index]); 
-    }
-    return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
-  }    
-  
   NumericVector lower_bound_grad(double rep_slope, double rep_intercept, NumericVector &normalised_depth, NumericVector &expected_err, NumericVector &total_terms, NumericMatrix &hess) {
     NumericVector grad(2); 
     for (int locus_index=0;locus_index<expected_err.size();locus_index++){
@@ -284,10 +224,10 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
     hess(1,0)=hess(0,1); 
     return grad; 
   }    
-   
-  double update_single_g(int locus_index, int sample_index, double local_rep, double log_local_rep, double &x_g, double &g_1, double &xx, double &x1){
-    double x_ns=x[locus_index][sample_index];
-    double regression_mean=(beta[locus_index]*x_ns+means[locus_index])*flips[locus_index][sample_index]; 
+  
+  double update_single_g(int locus_index, int sample_index, double local_rep, double log_local_rep){
+    NumericVector x_ns=x[locus_index]( sample_index, _ );
+    double regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
     double v=1.0/g_prec[locus_index][sample_index]; 
     double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
     double a_ns=a[locus_index][sample_index]; 
@@ -297,28 +237,28 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
     double pf=n[locus_index][sample_index]*sig*(1.0-sig); 
     double mpf=m*pf+alt[locus_index][sample_index]-n[locus_index][sample_index]*sig; 
     double old_lb; 
-    if (debug) old_lb=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]);
+    if (debug) old_lb=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
     // update q(g) based on changes to rep and regression model (i.e. beta/mean)
     g_prec[locus_index][sample_index]=local_rep+old_prec_f;
     g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f; 
-    double old_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep,flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+    double old_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
     if (debug && (old_lb > (old_local_bound+0.001))) cout << "Warning: updating message from normal to g lowered lb, old: " << old_lb << " new: " << old_local_bound << endl; 
     // update q(g) [NB: this is still correct for random q(rep)]
     g_prec[locus_index][sample_index]=local_rep+pf;
     g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+mpf; 
 	
-    double new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+    double new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
     double step=1.0; 
     while (new_local_bound<old_local_bound){
       step *= .5; 
       g_prec[locus_index][sample_index]=local_rep+step*pf+(1.0-step)*old_prec_f;
       g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+step*mpf+(1.0-step)*old_mean_prec_f;
-      new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+      new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
       if (step<0.000001){
 	if (debug) cout << "Step is very small" << endl;
 	g_prec[locus_index][sample_index]=local_rep+old_prec_f;
 	g_mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f;
-	new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+	new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
 	break; 
       }
     }
@@ -335,50 +275,47 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 
     if (debug) {
       old_lb=new_local_bound; 
-      new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+      new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
       if ((new_local_bound + 0.001) < old_lb)
 	cout << "Warning: updating a decreased lower bound, old: " << old_lb << " new: " << new_local_bound << endl;
     }
-
+  
     //double check2=.5*a_ns*a_ns*v+log1plusexp(m+(1.0-2.0*a_ns)*v*.5); 
     //if (check2>check) cout << "update of a was bad: before " << check << " after " << check2 << endl;
-    switch (flips_setting){
-    case FLIPS_HARD:
-      // TODO could just look at abs(pred-m) i think
-      {
-      double pure_reg_mean=beta[locus_index]*x_ns+means[locus_index];
-      double flipOn = local_bound(-pure_reg_mean,g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
-      double flipOff = local_bound(pure_reg_mean,g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
-      flipOn += flips_log_odds_prior; 
-      flips[locus_index][sample_index]=(flipOn > flipOff) ? -1.0 : 1.0; 
-      }
-      break; 
-    case FLIPS_SOFT: 
-      double reg_mean=beta[locus_index]*x_ns+means[locus_index];
-      flips_log_odds[locus_index][sample_index]=flips_log_odds_prior - 2.0*local_rep*m*reg_mean;
-      flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
-       if ((abs(flips[locus_index][sample_index])>=1.0) || isnan(flips[locus_index][sample_index]))
-	{
-	  //if (debug)
-	  //  cout << "Warning: Ef is " << flips[locus_index][sample_index] << " may have numerical issues, log odds=" << flips_log_odds[locus_index][sample_index] << " reg_mean " << reg_mean << " local_rep " << local_rep << endl; 
-	  flips[locus_index][sample_index]=min(flips[locus_index][sample_index],.999); 
-	  flips[locus_index][sample_index]=max(flips[locus_index][sample_index],-.999); 
-	}
-      break;
+  
+  }
+
+  double update_flip(int locus_index, int sample_index, double local_rep, double log_local_rep){
+    NumericVector x_ns=x[locus_index]( sample_index, _ );
+    double regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
+    double v=1.0/g_prec[locus_index][sample_index]; 
+    double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
+
+    double old_lb; 
+    if (debug) {
+      old_lb=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
     }
+    
+    double reg_mean=sum(beta[locus_index]*x_ns); 
+    flips_log_odds[locus_index][sample_index]=flips_log_odds_prior - 2.0*local_rep*m*reg_mean;
+    flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
+    double mmax=.999; 
+    if ((abs(flips[locus_index][sample_index])>mmax) || isnan(flips[locus_index][sample_index]))
+      {
+	flips[locus_index][sample_index]=min(flips[locus_index][sample_index],mmax); 
+	flips[locus_index][sample_index]=max(flips[locus_index][sample_index],-mmax); 
+      }
+    if (flips_setting == FLIPS_HARD)
+      flips[locus_index][sample_index]= (flips[locus_index][sample_index] > 0.0) ? 1.0 : -1.0; 
+    
     if (debug){
-      old_lb=new_local_bound; 
-      regression_mean=(beta[locus_index]*x_ns+means[locus_index])*flips[locus_index][sample_index]; 
-      new_local_bound=local_bound(regression_mean, g_prec[locus_index][sample_index], g_mean_prec[locus_index][sample_index], a[locus_index][sample_index], local_rep, log_local_rep, flips[locus_index][sample_index], flips_log_odds[locus_index][sample_index], alt[locus_index][sample_index], n[locus_index][sample_index]); 
+      regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
+      double new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
       if ((new_local_bound+0.001) < old_lb)
 	cout << "Warning: updating flips decreased lower bound, old: " << old_lb << " new: " << new_local_bound << endl;
     }
-    
-    x_g+=x_ns*m*flips[locus_index][sample_index];
-    g_1+=m*flips[locus_index][sample_index]; 
-    xx+=(x_ns*x_ns); // no flips here since -1*-1=1
-    x1+=x_ns; // *flips[locus_index][sample_index];
-}
+
+  }
 
   double update_locus(int locus_index, NumericVector &expected_err, NumericVector &total_terms){
     double local_rep, log_local_rep;
@@ -395,6 +332,7 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
     case REV_LOCAL:
       local_rep = rep_shapes[locus_index]/rep_rates[locus_index]; 
       log_local_rep = ::Rf_digamma(rep_shapes[locus_index])-log(rep_rates[locus_index]); 
+      break; 
     case REV_LOCAL_REGRESSION:
       double v=1.0/logrep_p[locus_index] ;
       double m=logrep_mp[locus_index]*v; 
@@ -402,13 +340,21 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
       log_local_rep = m; 
       break;
     }
-    double x_g=0.0, g_1=0.0; 
-    double xx=0.0,x1=0.0;
+    int num_cov=x[locus_index].ncol(); 
+    NumericVector xg(num_cov); 
+    NumericMatrix xx(num_cov,num_cov); ;
     int num_samples=alt[locus_index].size(); 
 
     if (debug) old_lb=per_locus_bound(locus_index); 
     for (int sample_index=0;sample_index<num_samples;sample_index++){
-      update_single_g(locus_index, sample_index, local_rep, log_local_rep, x_g, g_1, xx, x1); 
+      update_single_g(locus_index, sample_index, local_rep, log_local_rep); 
+      if (flips_setting == FLIPS_HARD || flips_setting == FLIPS_SOFT)
+	update_flip(locus_index, sample_index, local_rep, log_local_rep); 
+      double v=1.0/g_prec[locus_index][sample_index]; 
+      double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
+      NumericVector x_ns=x[locus_index]( sample_index, _ );
+      xg+=x_ns*m*flips[locus_index][sample_index];
+      xx+=outer(x_ns); // TODO: could cache
     }
     if (debug){
       double new_lb=per_locus_bound(locus_index); 
@@ -416,39 +362,33 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 	cout << "Warning: lb got worse after optimizing q(g) and a, old:" << old_lb << " new: " << new_lb << endl;   	
       old_lb=new_lb; 
     }
-    double old_beta=beta[locus_index], old_mean=means[locus_index]; 
+    NumericVector old_beta=beta[locus_index];
     // update beta and means
-    double one1=(double)num_samples;
-    double det=xx*one1-x1*x1; 
-    if ((!learn_coeffs) || (det<1.0e-8)) { // x is constant
-      beta[locus_index]=0.0; 
-      means[locus_index]= (one1 > 0.0) ? g_1/one1 : 0.0; 
+    // TODO: might want to check if determinant is too close to zero
+    MatrixXd xxX(num_cov,num_cov);
+    for (int ii=0;ii<num_cov;ii++)
+      for (int jj=0;jj<num_cov;jj++)
+	xxX(ii,jj)=xx(ii,jj); 
+    LLT<MatrixXd> llt(xxX); // TODO cache these solves if slow
+    VectorXd xgv(num_cov);
+    for (int ii=0;ii<beta[locus_index].size();ii++)
+      xgv[ii]=xg[ii];
+    VectorXd res=llt.solve(xgv);
+    // beta[locus_index]=wrap(res);
+    for (int ii=0;ii<beta[locus_index].size();ii++)
+      beta[locus_index][ii]=res[ii]; 
+    if (!isfinite(beta[locus_index][0])) throw 1; 
+    if (debug && (num_cov==2)){
+      NumericVector check = twoByTwoSolve(xx,xg); 
+      if (abs(check[0]-beta[locus_index][0])>0.0001) throw 1; 
     }
-    else {
-      beta[locus_index]=(one1*x_g-x1*g_1)/det;
-      means[locus_index]=-(x1*x_g-xx*g_1)/det; 
-    }
-    if (debug && (det > 1.0e-8) && (one1 > 0.0)){
-      double new_lb=per_locus_bound(locus_index); 
-      if ((new_lb+1.0e-4)<old_lb) {
-	cout << "Warning: lb got worse after optimizing beta and mean, old:" << old_lb << " new: " << new_lb << endl; 
-	cout << "x_g " << x_g << " g_1 " << g_1 << " xx " << xx << " x1 " << x1 << " ns " << num_samples << " det " << det << endl;
-	cout << "x ";
-	for (int sample_index=0;sample_index<num_samples;sample_index++) cout << x[locus_index][sample_index] << ",";
-	cout << endl;
-	cout << "locus: " << locus_index << " beta " << beta[locus_index] << " ("<<old_beta << ") means " << means[locus_index] << " (" << old_mean << ")" << endl; 
-      }
-      old_lb=new_lb; 
-    }
-      
-    if ((!isfinite(beta[locus_index]) || (!isfinite(means[locus_index])))) { cerr << "x_g " << x_g << " g_1 " << g_1 << " xx " << xx << " x1 " << x1 << " ns " << num_samples << " det " << det << endl;  throw 1;  } 
     expected_err[locus_index]=0.0; 
     for (int sample_index=0;sample_index<num_samples;sample_index++){
       double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
       double v=1.0/g_prec[locus_index][sample_index]; 
-      double pred=beta[locus_index]*x[locus_index][sample_index]+means[locus_index]; 
+      double pred=sum(beta[locus_index]*x[locus_index]( sample_index, _ )); 
       double err=pred*flips[locus_index][sample_index]-m;
-      if (!isfinite(err)) { cerr << "m " << m << " v " << v << " beta " << beta[locus_index] << " mean " << means[locus_index] << endl; throw 1; } 
+      if (!isfinite(err)) throw 1;
       expected_err[locus_index]+=err*err+v; 
       if (flips_setting==FLIPS_SOFT){
 	double p=.5*(1.0-flips[locus_index][sample_index]); 
@@ -507,9 +447,9 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
     if (learn_rep){
       switch (rev_model){
       case REV_GLOBAL:
-	if (debug) old_lb=lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,random_effect_precision,flips);
+	if (debug) old_lb=lower_bound(); 
 	random_effect_precision=accumulate(total_terms.begin(),total_terms.end(),0.0)/accumulate(expected_err.begin(),expected_err.end(),0.0); 
-	lb = lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,random_effect_precision,flips);
+	lb = lower_bound();
 	break; 
       case REV_REGRESSION:
 	{
@@ -518,31 +458,32 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 	  NumericVector dir = twoByTwoSolve(hess,grad); 
 	  double step=1.0 ;
 	  NumericVector current = NumericVector::create( rep_slope, rep_intercept ); 
-	  old_lb=lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,current[0],current[1],normalised_depth,flips);
+	  old_lb=lower_bound();
 	  NumericVector proposed = current + step * dir; 
-	  lb = lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,proposed[0],proposed[1],normalised_depth,flips); 
+	  rep_slope=proposed[0]; 
+	  rep_intercept=proposed[1]; 
+	  lb = lower_bound(); 
 	  while (lb  < old_lb ){
 	    step *= .5;
 	    proposed = current + step * dir;
-	    lb = lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,proposed[0],proposed[1],normalised_depth,flips); 
+	    rep_slope=proposed[0]; 
+	    rep_intercept=proposed[1]; 
+	    lb = lower_bound();
 	    if (step < 0.00001){
 	      cout << "Warning: step size very small in learning REP model"<< endl; 
 	      break; 
 	    }
 	  }
-	  
-	  rep_slope=proposed[0]; 
-	  rep_intercept=proposed[1]; 
 	}
 	break;
       case REV_LOCAL:
 	double check_old_lb, check_lb; 
 	if (debug) {
-	  old_lb=lower_bound_local_rep(beta,means,a,g_mean_prec,g_prec,alt,n,x,rep_shapes,rep_rates,global_rep_shape,global_rep_rate,flips); 
+	  old_lb=lower_bound(); 
 	  check_old_lb=lb_gamma(rep_shapes,rep_rates,global_rep_shape,global_rep_rate); 
 	}
 	global_rep_shape=fit_gamma(rep_shapes,rep_rates,global_rep_rate); 
-	lb = lower_bound_local_rep(beta,means,a,g_mean_prec,g_prec,alt,n,x,rep_shapes,rep_rates,global_rep_shape,global_rep_rate,flips); 
+	lb = lower_bound();
 	if (debug){
 	  check_lb=lb_gamma(rep_shapes,rep_rates,global_rep_shape,global_rep_rate); 
 	  if (check_lb < check_old_lb){
@@ -557,7 +498,7 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 	break; 
       case REV_LOCAL_REGRESSION:
 	if (debug) 
-	  old_lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
+	  old_lb=lower_bound(); 
 	
 	NumericMatrix xx(2,2);
 	NumericVector xm(2); 
@@ -592,7 +533,7 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 	  logrep_mp[locus_index]=pred_mean*rep_rep+delta_to_logrep_mp[locus_index]; 
 	  logrep_p[locus_index]=rep_rep+delta_to_logrep_p[locus_index]; 
 	}
-	lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
+	lb=lower_bound(); 
 
       }
       
@@ -600,20 +541,7 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
       
       if (debug && ((lb+1.0e-3)<old_lb)) cout << "Warning: lb got worse after optimizing random effect var, old:" << old_lb << " new:" << lb << endl; 
     } else {
-      switch (rev_model){
-      case REV_GLOBAL:
-	lb = lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,random_effect_precision,flips);
-	break; 
-      case REV_REGRESSION:
-	lb = lower_bound(beta,means,a,g_mean_prec,g_prec,alt,n,x,rep_slope,rep_intercept,normalised_depth,flips); 
-	break;
-      case REV_LOCAL:
-	lb = lower_bound_local_rep(beta,means,a,g_mean_prec,g_prec,alt,n,x,rep_shapes,rep_rates,global_rep_shape,global_rep_rate,flips); 
-	break;
-      case REV_LOCAL_REGRESSION:
-	lb=lower_bound_local_reg(beta,means,a,g_mean_prec,g_prec,alt,n,x,flips); 
-	break;
-      }
+      lb=lower_bound(); 
     }
 
     if (learn_flips_prior){ // note: this should work for hard assignment too
@@ -623,8 +551,8 @@ double lower_bound_local_reg(NumericVector &beta, NumericVector &means, vector<N
 	total += (double)flips[locus_index].size(); 
       }
       sumQ = .5*(total-sumQ); 
-      flips_log_odds_prior = log(sumQ) - log(total - sumQ);
-      if (isnan(flips_log_odds_prior)) throw 1; 
+      flips_log_odds_prior = log(sumQ+1.0) - log(1.0+total - sumQ);
+      if (!isfinite(flips_log_odds_prior)) throw 1; 
       flips_log1minusP = log(1.0 - logistic(flips_log_odds_prior)); 
     }
 
@@ -637,8 +565,6 @@ public:
     double previous_it_lb=-1.0e30;   
     for (int it=0;it<max_its;it++){
       double lb = one_iteration(); 
-      double beta_l2 = inner_product(beta.begin(),beta.end(),beta.begin(),0.0); 
-      double means_l2 = inner_product(means.begin(),means.end(),means.begin(),0.0); 
       if (trace){ 
 	cout << "it: " << it; 
 	switch (rev_model){
@@ -659,7 +585,7 @@ public:
 	}
 	if (flips_setting != FLIPS_NONE)
 	  cout << " flips_prior_logodds " << flips_log_odds_prior ; 
-	cout << " beta sd " << sqrt(beta_l2/(double)num_loci) << " mean sd " << sqrt(means_l2/(double)num_loci) << " lb: " << lb << endl; 
+	cout << " lb: " << lb << endl; 
       }
       R_CheckUserInterrupt(); 
       if (abs(lb-previous_it_lb) < converge_tol){
@@ -669,76 +595,7 @@ public:
       previous_it_lb=lb;
     }
 
-    NumericVector se2(num_loci); 
-    // calculate standard errors and Wald p-values
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      double xx=0.0,x1=0.0,one1=0.0;
-      int num_samples=alt[locus_index].size(); 
-    
-      for (int sample_index=0;sample_index<num_samples;sample_index++){
-	double x_ns=x[locus_index][sample_index]; 
-	// next line uses that a=sigma(m+...)
-	double c=((double)n[locus_index][sample_index])*a[locus_index][sample_index]*(1.0-a[locus_index][sample_index]); 
-	xx+=c*x_ns*x_ns; 
-	x1+=c*x_ns; 
-	one1+=c; 
-      }
-      double det=xx*one1-x1*x1; 
-      standard_errors[locus_index]=one1 / det;
-    }
-  
-    // alternative calculation
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      double xx=0.0,x1=0.0,one1=0.0;
-      int num_samples=alt[locus_index].size(); 
-    
-      for (int sample_index=0;sample_index<num_samples;sample_index++){
-	double x_ns=x[locus_index][sample_index]; 
-	double m=g_mean_prec[locus_index][sample_index]/g_prec[locus_index][sample_index]; 
-	double v=1.0/g_prec[locus_index][sample_index]; 
-	double a_ns=a[locus_index][sample_index]; 
-	double sig=logistic(m+(1.0-2.0*a_ns)*v*.5);
-	double c=n[locus_index][sample_index]*sig*(1.0-sig);  
-	double f = random_effect_precision/(random_effect_precision+c); 
-	c*= f*f; 
-	xx+=c*x_ns*x_ns; 
-	x1+=c*x_ns; 
-	one1+=c; 
-      }
-      double det=xx*one1-x1*x1; 
-      se2[locus_index]=one1 / det;
-    }
-
-    NumericVector se_ep(num_loci), coeffs_ep(num_loci);
-
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      double xx=0.0,x1=0.0,one1=0.0,mp1=0.0,mp2=0.0;
-      int num_samples=alt[locus_index].size(); 
-    
-      for (int sample_index=0;sample_index<num_samples;sample_index++){
-	double x_ns=x[locus_index][sample_index]; 
-	double regression_mean=beta[locus_index]*x_ns+means[locus_index];
-	double prec_f=g_prec[locus_index][sample_index]-random_effect_precision; 
-	double mean_prec_f=g_mean_prec[locus_index][sample_index]-regression_mean*random_effect_precision; 
-	double R = random_effect_precision/(random_effect_precision+prec_f); 
-	double c=R*prec_f;
-	mp1+=R*mean_prec_f*x_ns;
-	mp2+=R*mean_prec_f; 
-	xx+=c*x_ns*x_ns; 
-	x1+=c*x_ns; 
-	one1+=c; 
-      }
-      double det=xx*one1-x1*x1; 
-      se_ep[locus_index]=one1 / det;
-      coeffs_ep[locus_index]= (mp1*one1-mp2*x1)/det;
-    }
-
     return List::create(_("coeffs") = beta,
-			_("means") = means,
-			_("standard.errors") = standard_errors, 
-			_("alt.se") = se2, 
-			_("se.ep") = se_ep,
-			_("coeffs.ep") = coeffs_ep,
 			_("flips") = flips,
 			_("rep.slope") = rep_slope,
 			_("rep.intercept") = rep_intercept,
@@ -782,9 +639,7 @@ public:
     NumericVector temp(num_loci); 
     rep_shapes = clone(temp);
     rep_rates = clone(temp); 
-    beta=clone(temp); 
     standard_errors=clone(temp); 
-    means=clone(temp); 
     lower_bounds=clone(temp); 
     delta_to_logrep_p=clone(temp); 
     delta_to_logrep_mp=clone(temp); 
@@ -808,14 +663,20 @@ public:
       break;
     }
 
+    x.resize(num_loci); 
     for (int locus_index=0;locus_index<num_loci;locus_index++){
+      if (trace && ((locus_index % 1000)==0))
+	cout << "Loading... locus " << locus_index << "/" << num_loci << endl; 
       NumericVector alti((SEXP)alt_rlist[locus_index]); 
       alt.push_back(alti); 
       NumericVector ni((SEXP)n_rlist[locus_index]); 
       n.push_back(ni); 
-      NumericVector xi((SEXP)x_rlist[locus_index]); 
-      x.push_back(xi); 
+      NumericMatrix xi((SEXP)x_rlist[locus_index]); 
       int num_samples=alti.size(); 
+      x[locus_index]=clone(xi); 
+      int num_cov=xi.ncol();
+      NumericVector b(num_cov,0.0);
+      beta.push_back(b); 
       NumericVector ai(num_samples,0.5); 
       a.push_back(ai);
       NumericVector mp(num_samples,0.0) ;
@@ -860,6 +721,7 @@ public:
 	break;
       }
     }
+    cout << "Loaded" << endl; 
   }
 };
 

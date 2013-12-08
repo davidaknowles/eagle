@@ -7,5 +7,5 @@ Author: David A. Knowles
 Maintainer: David A. Knowles <knowles84@gmail.com>
 Description: TODO
 License: LGPL-2
-Depends: Rcpp (>= 0.10.4), BH
-LinkingTo: Rcpp, BH
+Depends: Rcpp (>= 0.10.4), RcppEigen (>= 0.3.1.2.1), BH
+LinkingTo: Rcpp, RcppEigen, BH
