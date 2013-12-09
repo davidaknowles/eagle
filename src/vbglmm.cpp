@@ -285,6 +285,29 @@ class Vbglmm {
   
   }
 
+  double converge_local(int locus_index, int sample_index, double local_rep, double log_local_rep){
+    NumericVector x_ns=x[locus_index]( sample_index, _ );
+    prec_f[locus_index][sample_index]=0.0; 
+    mean_prec_f[locus_index][sample_index]=0.0; 
+    g_prec[locus_index][sample_index]=local_rep; 
+    g_mean_prec[locus_index][sample_index]=0.0 ;
+    a[locus_index][sample_index]=0.5;
+    
+    int max_inner=10; 
+    double threshold=0.1; 
+    double regression_mean1=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
+    double old_lb = local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep); 
+    double new_lb;
+    for (int ii=0;ii<max_inner;ii++){
+      update_single_g(locus_index, sample_index, local_rep, log_local_rep); 
+      new_lb=local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep); 
+      if (abs(new_lb-old_lb)<threshold)
+	break; 
+      old_lb=new_lb; 
+    }
+    return new_lb; 
+  }
+
   double update_flip(int locus_index, int sample_index, double local_rep, double log_local_rep){
     NumericVector x_ns=x[locus_index]( sample_index, _ );
     double regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
@@ -305,9 +328,15 @@ class Vbglmm {
 	flips[locus_index][sample_index]=min(flips[locus_index][sample_index],mmax); 
 	flips[locus_index][sample_index]=max(flips[locus_index][sample_index],-mmax); 
       }
-    if (flips_setting == FLIPS_HARD)
-      flips[locus_index][sample_index]= (flips[locus_index][sample_index] > 0.0) ? 1.0 : -1.0; 
-    
+    if (flips_setting == FLIPS_HARD){
+      // flips[locus_index][sample_index]= (flips[locus_index][sample_index] > 0.0) ? 1.0 : -1.0; 
+      flips[locus_index][sample_index]=1.0; 
+      double noflip_lb=converge_local(locus_index,sample_index,local_rep,log_local_rep); // TODO start from scratch? 
+      flips[locus_index][sample_index]=-1.0; 
+      double flip_lb=converge_local(locus_index,sample_index,local_rep,log_local_rep); 
+      flips[locus_index][sample_index]=((flip_lb + flips_log_odds_prior - noflip_lb) > 0.0) ? -1.0 : 1.0; 
+      converge_local(locus_index,sample_index,local_rep,log_local_rep); // TODO save result rather than recomputing
+    }
     if (debug){
       regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
       double new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
@@ -671,10 +700,10 @@ public:
       alt.push_back(alti); 
       NumericVector ni((SEXP)n_rlist[locus_index]); 
       n.push_back(ni); 
-      NumericMatrix xi((SEXP)x_rlist[locus_index]); 
+      //      NumericMatrix xi(
       int num_samples=alti.size(); 
-      x[locus_index]=clone(xi); 
-      int num_cov=xi.ncol();
+      x[locus_index]=as<NumericMatrix>((SEXP)x_rlist[locus_index]); 
+      int num_cov=x[locus_index].ncol();
       NumericVector b(num_cov,0.0);
       beta.push_back(b); 
       NumericVector ai(num_samples,0.5); 
