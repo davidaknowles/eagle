@@ -48,6 +48,8 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       s$flips.setting=1
   } else if (flips == "soft"){
       s$flips.setting=2
+  } else if (flips == "structured") {
+      s$flips.setting=3
   } else {
       error("Invalid setting of flips: options are none, hard, soft")
   }
