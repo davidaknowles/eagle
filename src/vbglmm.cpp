@@ -116,7 +116,7 @@ public :
 };
 
 class Vbglmm {
-
+  int it; 
   bool debug;
   int num_loci;
   int max_its; 
@@ -184,7 +184,7 @@ class Vbglmm {
     if (flips_setting == FLIPS_SOFT  || flips_setting == FLIPS_STRUCTURED){
       double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
       // entropy TODO: more numerically stable to use log odds? 
-      lb -= flip_prob*log(flip_prob)+(1.0-flip_prob)*log(1.0-flip_prob); 
+      lb -= (flip_prob==0.0 || flip_prob==1.0) ? 0.0 : (flip_prob*log(flip_prob)+(1.0-flip_prob)*log(1.0-flip_prob) ); 
       //if (isnan(lb)) { cout << flip_prob << " " << flips_log_odds << endl; throw 1; }
       lb += flips_log1minusP + flip_prob * flips_log_odds_prior;
     } 
@@ -195,6 +195,7 @@ class Vbglmm {
       double lb_flipped = local_bound(locus_index, sample_index, -pred, Erep, Elogrep, g_flip); 
       double lb_not = local_bound(locus_index, sample_index, pred, Erep, Elogrep, g_stuff); 
       lb += flip_prob * lb_flipped + (1.0 - flip_prob) * lb_not; 
+      if (isnan(lb)) throw 1; 
       return lb; 
     } else {
       return lb + local_bound(locus_index, sample_index, pred * flips[locus_index][sample_index], Erep, Elogrep, g_stuff); 
@@ -272,39 +273,33 @@ class Vbglmm {
     double m=g.mean_prec[locus_index][sample_index]/g.prec[locus_index][sample_index]; 
     double a_ns=g.a[locus_index][sample_index]; 
     double sig=logistic(m+(1.0-2.0*a_ns)*v*.5);
-    double old_prec_f=g.prec_f[locus_index][sample_index]; 
-    double old_mean_prec_f=g.mean_prec_f[locus_index][sample_index]; 	
+    double old_prec=g.prec[locus_index][sample_index]; 
+    double old_mean_prec=g.mean_prec[locus_index][sample_index]; 	
     double pf=n[locus_index][sample_index]*sig*(1.0-sig); 
-    double mpf=m*pf+alt[locus_index][sample_index]-n[locus_index][sample_index]*sig; 
-    double old_lb; 
-    if (debug) old_lb=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
-    // update q(g) based on changes to rep and regression model (i.e. beta/mean)
-    g.prec[locus_index][sample_index]=local_rep+old_prec_f;
-    g.mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f; 
+    double p=pf+local_rep; 
+    double mp=m*pf+alt[locus_index][sample_index]-n[locus_index][sample_index]*sig+local_rep*regression_mean; 
+    double new_local_bound; 
     double old_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
-    if (debug && (old_lb > (old_local_bound+0.001))) cout << "Warning: updating message from normal to g lowered lb, old: " << old_lb << " new: " << old_local_bound << endl; 
     // update q(g) [NB: this is still correct for random q(rep)]
-    g.prec[locus_index][sample_index]=local_rep+pf;
-    g.mean_prec[locus_index][sample_index]=regression_mean*local_rep+mpf; 
-	
-    double new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+    g.prec[locus_index][sample_index]=p;
+    g.mean_prec[locus_index][sample_index]=mp;
+
+    
+    new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
     double step=1.0; 
     while (new_local_bound<old_local_bound){
       step *= .5; 
-      g.prec[locus_index][sample_index]=local_rep+step*pf+(1.0-step)*old_prec_f;
-      g.mean_prec[locus_index][sample_index]=regression_mean*local_rep+step*mpf+(1.0-step)*old_mean_prec_f;
+      g.prec[locus_index][sample_index]=step*p+(1.0-step)*old_prec;
+      g.mean_prec[locus_index][sample_index]=step*mp+(1.0-step)*old_mean_prec;
       new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
       if (step<0.000001){
 	if (debug) cout << "Step is very small" << endl;
-	g.prec[locus_index][sample_index]=local_rep+old_prec_f;
-	g.mean_prec[locus_index][sample_index]=regression_mean*local_rep+old_mean_prec_f;
+	g.prec[locus_index][sample_index]=old_prec; 
+	g.mean_prec[locus_index][sample_index]=old_mean_prec; 
 	new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
 	break; 
       }
     }
-    g.prec_f[locus_index][sample_index]=g.prec[locus_index][sample_index]-local_rep; 
-    g.mean_prec_f[locus_index][sample_index]=g.mean_prec[locus_index][sample_index]-local_rep*regression_mean; 
-	  
     //if (new_local_bound<old_local_bound) cout << "GDI bound got worse, old: " << old_local_bound << " new: " << new_local_bound << endl; 
     m=g.mean_prec[locus_index][sample_index]/g.prec[locus_index][sample_index]; 
     v=1.0/g.prec[locus_index][sample_index]; 
@@ -312,13 +307,13 @@ class Vbglmm {
     //double check=.5*a_ns*a_ns*v+log1plusexp(m+(1.0-2.0*a_ns)*v*.5); 
     g.a[locus_index][sample_index]=logistic(m+(1.0-2.0*a_ns)*v*.5);
 
-    old_lb = new_local_bound; 
+    double old_lb = new_local_bound; 
     new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
 
-    if (debug) {
-      if ((new_local_bound + 0.001) < old_lb)
-	cout << "Warning: updating a decreased lower bound, old: " << old_lb << " new: " << new_local_bound << endl;
-    } 
+    // if (debug) {
+    // if ((new_local_bound + 0.001) < old_lb)
+    //	cout << "Warning: updating a decreased lower bound, old: " << old_lb << " new: " << new_local_bound << endl;
+    //} 
     return new_local_bound; 
     //double check2=.5*a_ns*a_ns*v+log1plusexp(m+(1.0-2.0*a_ns)*v*.5); 
     //if (check2>check) cout << "update of a was bad: before " << check << " after " << check2 << endl;
@@ -381,7 +376,7 @@ class Vbglmm {
 	double noflip_lb=update_single_g(locus_index,sample_index,local_rep,log_local_rep, g_stuff); // TODO start from scratch? 
 	flips[locus_index][sample_index]=-1.0; 
 	double flip_lb=update_single_g(locus_index,sample_index,local_rep,log_local_rep, g_flip);       
-	flips_log_odds[locus_index][sample_index]=flips_log_odds_prior + flip_lb - noflip_lb; 
+	flips_log_odds[locus_index][sample_index]=flip_lb + flips_log_odds_prior - noflip_lb;
 	flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
     }
     if (debug){
@@ -657,7 +652,7 @@ public:
 
   SEXP run(){
     double previous_it_lb=-1.0e30;   
-    for (int it=0;it<max_its;it++){
+    for (it=0;it<max_its;it++){
       double lb = one_iteration(); 
       if (trace){ 
 	cout << "it: " << it; 

@@ -93,14 +93,13 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   list(p.values=p,q.values=q,res.full=res.full,res.null=res.null)
 }
 
-
-run.perms = function(alt,n,x,max.its=1000,tol=10.0,debug=F,flips=F,n.perms=10,learn.rev=T,rev=1.0)
+run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10)
 {
   res=list()
   for (perm in 1:n.perms){
       cat("Running permutation number ",perm," of ",n.perms," ---------------\n")
-      for (i in 1:length(x)) x[[i]]=sample(x[[i]])
-      res[[perm]]=run.all(alt,n,x,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev)
+      for (i in 1:length(xFull)) xFull[[i]][,1]=sample(xFull[[i]][,1])
+      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first)
   }
   res
 }
