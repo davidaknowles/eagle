@@ -24,10 +24,12 @@ default.settings = function(){
        flips.setting=0,
        flips.logodds.prior=-2.0,
        learn.flips.prior=T, 
+	coeff.regulariser=0.0,
+	init.flips=F,
        trace=T)
 }
 
-run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F)
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0)
 {
   s=default.settings()
   if (rev.model=="global"){
@@ -53,7 +55,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   } else {
       error("Invalid setting of flips: options are none, hard, soft")
   }
-      
+  s$coeff.regulariser=coeff.reg
   s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
   s$max.iterations=max.its
   s$allow.flips=flips
@@ -61,16 +63,17 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$convergence.tolerance=tol
   s$debug=debug
   s$trace=trace
-  s$learn.coeffs=!null.first
-  s$learn.flips.prior=s$learn.coeffs
+  s$learn.flips.prior=T
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
   # run first model -------------
   res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
   
-  s$learn.flips.prior=null.first
+  s$learn.flips.prior=F
   s$flips.logodds.prior=res.first$flips.logodds.prior
   s$learn.rev=F
+  s$init.flips=T
+  s$flips=res.first$flips
   s$random.effect.variance=res.first$random.effect.var
   s$rep.slope=res.first$rep.slope
   s$rep.rep=res.first$rep.rep
@@ -88,18 +91,22 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       res.null=res.second
   }
   log.like.ratios=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
-  p=1.0-pchisq(log.like.ratios,df=1)
+  df=mapply(FUN=function(a,b) ncol(a)-ncol(b),xFull,xNull)
+  p=1.0-pchisq(log.like.ratios,df=df)
   q=p.adjust(p,method="fdr")
   list(p.values=p,q.values=q,res.full=res.full,res.null=res.null)
 }
 
-run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10)
+run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0)
 {
   res=list()
   for (perm in 1:n.perms){
       cat("Running permutation number ",perm," of ",n.perms," ---------------\n")
-      for (i in 1:length(xFull)) xFull[[i]][,1]=sample(xFull[[i]][,1])
-      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first)
+      for (i in 1:length(xFull)) {
+          to.permute=if (ncol(xFull[[i]])>=4) c(1,4) else 1
+          xFull[[i]][,to.permute]=xFull[[i]][sample.int(nrow(xFull[[i]])),to.permute]
+      }
+      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first,coeff.reg=coeff.reg)
   }
   res
 }
