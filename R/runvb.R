@@ -29,7 +29,7 @@ default.settings = function(){
        trace=T)
 }
 
-run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0)
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
 {
   s=default.settings()
   if (rev.model=="global"){
@@ -55,6 +55,11 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   } else {
       error("Invalid setting of flips: options are none, hard, soft")
   }
+  if (!is.list(nullToFlip))
+      nullToFlip=lapply(xNull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
+  if (!is.list(fullToFlip))
+      fullToFlip=lapply(xFull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
+  
   s$coeff.regulariser=coeff.reg
   s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
   s$max.iterations=max.its
@@ -66,6 +71,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$learn.flips.prior=T
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
+  s$toFlip=if (null.first) nullToFlip else fullToFlip
   # run first model -------------
   res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
   
@@ -80,7 +86,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$rep.intercept=res.first$rep.intercept
   s$rep.global.rate=res.first$rep.global.rate
   s$rep.global.shape=res.first$rep.global.shape
-
+  s$toFlip=if (null.first) fullToFlip else nullToFlip
   # run second model --------------
   res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
   if (null.first){
@@ -97,7 +103,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   list(p.values=p,q.values=q,res.full=res.full,res.null=res.null)
 }
 
-run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0)
+run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
 {
   res=list()
   for (perm in 1:n.perms){
@@ -106,7 +112,7 @@ run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none
           to.permute=if (ncol(xFull[[i]])>=4) c(1,4) else 1
           xFull[[i]][,to.permute]=xFull[[i]][sample.int(nrow(xFull[[i]])),to.permute]
       }
-      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first,coeff.reg=coeff.reg)
+      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first,coeff.reg=coeff.reg,nullToFlip=nullToFlip,fullToFlip=fullToFlip)
   }
   res
 }

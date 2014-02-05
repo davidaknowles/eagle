@@ -148,6 +148,7 @@ class Vbglmm {
   vector<NumericVector> flips; 
   vector<NumericVector> flips_log_odds; 
   double flips_log_odds_prior, flips_log1minusP; 
+  vector<NumericVector> to_flip; 
 
   // C++ structure
   vector<NumericVector> alt; // counts of alternative SNP
@@ -155,7 +156,17 @@ class Vbglmm {
   //vector<vector<NumericVector> > x; // covariate
   vector<NumericMatrix> x; 
 
-  double local_bound(int locus_index, int sample_index, double pred_times_flip, double Erep, double Elogrep, G_stuff &g){
+  NumericVector selective_flip(NumericVector &x_ns, NumericVector &index, double flip) {
+    NumericVector result(x_ns); 
+    for (int i=0;i<x_ns.size();i++){
+      if (index[i]==1.0){
+  	result[i] *= flip; 
+      }
+    }
+    return result; 
+  }
+
+  double local_bound(int locus_index, int sample_index, double pred_times_flip, double Erep, double Elogrep, G_stuff &g, double pred_to_flip){
     double v=1.0/g.prec[locus_index][sample_index]; 
     double m=g.mean_prec[locus_index][sample_index]*v; 
     double Elog1plus_exp_g=.5*g.a[locus_index][sample_index]*g.a[locus_index][sample_index]*v+log1plusexp(m+(1.0-2.0*g.a[locus_index][sample_index])*v*.5); 
@@ -165,7 +176,7 @@ class Vbglmm {
     double Eerr2 = err*err+v;
     if (flips_setting == FLIPS_SOFT){
       double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
-      Eerr2+=pred_times_flip*pred_times_flip*4.0*flip_prob*(1.0-flip_prob); 
+      Eerr2+=pred_to_flip*pred_to_flip*4.0*flip_prob*(1.0-flip_prob); 
     }
     // < log normal >  [note: cancelling log2pi terms]
     lb+=-.5*Erep*Eerr2+.5*Elogrep; 
@@ -175,7 +186,7 @@ class Vbglmm {
     return lb; 
   }
 
-  double local_bound(int locus_index, int sample_index, double pred, double Erep, double Elogrep){
+  double local_bound(int locus_index, int sample_index, double pred_no_flip, double Erep, double Elogrep, double pred_to_flip){
     double lb=0.0;
     if (flips_setting == FLIPS_SOFT  || flips_setting == FLIPS_STRUCTURED){
       double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
@@ -188,13 +199,13 @@ class Vbglmm {
       lb += ((flips[locus_index][sample_index]==-1.0) ? flips_log_odds_prior : 0.0) + flips_log1minusP ; 
     if (flips_setting == FLIPS_STRUCTURED){
       double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
-      double lb_flipped = local_bound(locus_index, sample_index, -pred, Erep, Elogrep, g_flip); 
-      double lb_not = local_bound(locus_index, sample_index, pred, Erep, Elogrep, g_stuff); 
+      double lb_flipped = local_bound(locus_index, sample_index, pred_no_flip - pred_to_flip, Erep, Elogrep, g_flip, pred_to_flip); 
+      double lb_not = local_bound(locus_index, sample_index, pred_no_flip + pred_to_flip, Erep, Elogrep, g_stuff, pred_to_flip); 
       lb += flip_prob * lb_flipped + (1.0 - flip_prob) * lb_not; 
       if (isnan(lb)) throw 1; 
       return lb; 
     } else {
-      return lb + local_bound(locus_index, sample_index, pred * flips[locus_index][sample_index], Erep, Elogrep, g_stuff); 
+      return lb + local_bound(locus_index, sample_index, pred_to_flip * flips[locus_index][sample_index] + pred_no_flip, Erep, Elogrep, g_stuff, pred_to_flip); 
     }
   }
 
@@ -235,8 +246,10 @@ class Vbglmm {
     }
 
     for (int sample_index=0;sample_index<alt[locus_index].size();sample_index++){
-      double pred=sum(beta[locus_index]*x[locus_index]( sample_index, _ )); 
-      lb+=local_bound(locus_index, sample_index, pred, Erep, Elogrep); 
+      NumericVector x_ns=x[locus_index]( sample_index, _ );
+      double pred_to_flip=sum(beta[locus_index]*x_ns*to_flip[locus_index]); 
+      double pred_no_flip=sum(beta[locus_index]*x_ns*(-to_flip[locus_index]+1.0));
+      lb+=local_bound(locus_index, sample_index, pred_no_flip, Erep, Elogrep,pred_to_flip); 
     }
     return lb; 
   }
@@ -261,38 +274,40 @@ class Vbglmm {
     hess(1,0)=hess(0,1); 
     return grad; 
   }    
+
   
   double update_single_g(int locus_index, int sample_index, double local_rep, double log_local_rep, G_stuff &g){
     NumericVector x_ns=x[locus_index]( sample_index, _ );
-    double regression_mean=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
+    double pred_to_flip=sum(beta[locus_index]*x_ns*to_flip[locus_index]); 
+    double regression_mean=pred_to_flip*flips[locus_index][sample_index]+sum(beta[locus_index]*x_ns*(-to_flip[locus_index]+1.0)); 
     double v=1.0/g.prec[locus_index][sample_index]; 
     double m=g.mean_prec[locus_index][sample_index]/g.prec[locus_index][sample_index]; 
     double a_ns=g.a[locus_index][sample_index]; 
     double sig=logistic(m+(1.0-2.0*a_ns)*v*.5);
     double old_prec=g.prec[locus_index][sample_index]; 
-    double old_mean_prec=g.mean_prec[locus_index][sample_index]; 	
+    double old_mean_prec=g.mean_prec[locus_index][sample_index];
     double pf=n[locus_index][sample_index]*sig*(1.0-sig); 
-    double p=pf+local_rep; 
+    double p=pf+local_rep;
     double mp=m*pf+alt[locus_index][sample_index]-n[locus_index][sample_index]*sig+local_rep*regression_mean; 
     double new_local_bound; 
-    double old_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+    double old_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
     // update q(g) [NB: this is still correct for random q(rep)]
     g.prec[locus_index][sample_index]=p;
     g.mean_prec[locus_index][sample_index]=mp;
 
     
-    new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+    new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
     double step=1.0; 
     while (new_local_bound<old_local_bound){
       step *= .5; 
       g.prec[locus_index][sample_index]=step*p+(1.0-step)*old_prec;
       g.mean_prec[locus_index][sample_index]=step*mp+(1.0-step)*old_mean_prec;
-      new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+      new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
       if (step<0.000001){
 	if (debug) cout << "Step is very small, reg mean: " << regression_mean << endl;
 	g.prec[locus_index][sample_index]=old_prec; 
 	g.mean_prec[locus_index][sample_index]=old_mean_prec; 
-	new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+	new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
 	break; 
       }
     }
@@ -304,7 +319,7 @@ class Vbglmm {
     g.a[locus_index][sample_index]=logistic(m+(1.0-2.0*a_ns)*v*.5);
 
     double old_lb = new_local_bound; 
-    new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g); 
+    new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
 
     // if (debug) {
     // if ((new_local_bound + 0.001) < old_lb)
@@ -321,15 +336,15 @@ class Vbglmm {
     g_stuff.prec[locus_index][sample_index]=local_rep; 
     g_stuff.mean_prec[locus_index][sample_index]=0.0 ;
     g_stuff.a[locus_index][sample_index]=0.5;
-    
+    double pred_to_flip=sum(beta[locus_index]*x_ns*to_flip[locus_index]); 
+    double regression_mean1=pred_to_flip*flips[locus_index][sample_index]+sum(beta[locus_index]*x_ns*(-to_flip[locus_index]+1.0)); 
     int max_inner=10; 
     double threshold=0.1; 
-    double regression_mean1=sum(beta[locus_index]*x_ns)*flips[locus_index][sample_index]; 
-    double old_lb = local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep); 
+    double old_lb=local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep, pred_to_flip); 
     double new_lb;
     for (int ii=0;ii<max_inner;ii++){
       update_single_g(locus_index, sample_index, local_rep, log_local_rep, g_stuff); 
-      new_lb=local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep); 
+      new_lb=local_bound(locus_index, sample_index, regression_mean1, local_rep, log_local_rep, pred_to_flip); 
       if (abs(new_lb-old_lb)<threshold)
 	break; 
       old_lb=new_lb; 
@@ -339,15 +354,16 @@ class Vbglmm {
 
   double update_flip(int locus_index, int sample_index, double local_rep, double log_local_rep){
     NumericVector x_ns=x[locus_index]( sample_index, _ );
-    double regression_mean=sum(beta[locus_index]*x_ns); 
+    double pred_to_flip=sum(beta[locus_index]*x_ns*to_flip[locus_index]); 
+    double pred_no_flip=sum(beta[locus_index]*x_ns*(-to_flip[locus_index]+1.0));
     double old_lb; 
     if (debug) {
-      old_lb=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
+      old_lb=local_bound(locus_index, sample_index, pred_no_flip, local_rep, log_local_rep, pred_to_flip); 
     }
       
     if (flips_setting==FLIPS_SOFT || flips_setting==FLIPS_HARD){
+      double regression_mean=pred_to_flip*flips[locus_index][sample_index]+pred_no_flip; 
       double m=g_stuff.mean_prec[locus_index][sample_index]/g_stuff.prec[locus_index][sample_index]; 
-      
       flips_log_odds[locus_index][sample_index]=flips_log_odds_prior - 2.0*local_rep*m*regression_mean;
       flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
       double mmax=.999; 
@@ -379,7 +395,7 @@ class Vbglmm {
 	}
     }
     if (debug){
-      double new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep); 
+      double new_local_bound=local_bound(locus_index, sample_index, pred_no_flip, local_rep, log_local_rep, pred_to_flip); 
       if ((new_local_bound+0.001) < old_lb)
 	cout << "Warning: updating flips decreased lower bound, old: " << old_lb << " new: " << new_local_bound << endl;
     }
@@ -426,12 +442,14 @@ class Vbglmm {
       if (flips_setting == FLIPS_STRUCTURED){
 	double m_flip=g_flip.mean_prec[locus_index][sample_index]/g_flip.prec[locus_index][sample_index]; 
 	double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
-	out = (-flip_prob) * m_flip + (1.0-flip_prob) * m ; 
+	//out = (-flip_prob) * m_flip + (1.0-flip_prob) * m ; 
+	NumericVector x_flipped = selective_flip(x_ns, to_flip[locus_index], -1.0); 
+	xg += x_flipped * flip_prob * m_flip + x_ns * (1.0-flip_prob) * m; 
+	xx += flip_prob * outer(x_flipped) + (1.0 - flip_prob) * outer(x_ns); 
       } else {
-	out = flips[locus_index][sample_index] * m; 
+	xg += x_ns * flips[locus_index][sample_index] * m; 
+	xx += outer(x_ns);// TODO: cache XX
       }
-      xg+=x_ns*out; 
-      xx+=outer(x_ns); // TODO: could cache
     }
     if (debug){
       double new_lb=per_locus_bound(locus_index); 
@@ -444,10 +462,10 @@ class Vbglmm {
     // TODO: might want to check if determinant is too close to zero
     MatrixXd xxX(num_cov,num_cov);
     for (int ii=0;ii<num_cov;ii++)
-      for (int jj=0;jj<num_cov;jj++)
+      for (int jj=0;jj<num_cov;jj++){
+	xx(ii,jj) += (coeff_regulariser>0.0 && ii==jj) ? coeff_regulariser : 0.0; 
 	xxX(ii,jj)=xx(ii,jj); 
-    if (coeff_regulariser>0.0)
-      xxX+=coeff_regulariser*MatrixXd::Identity(xxX.rows(),xxX.cols());
+      }
     LLT<MatrixXd> llt(xxX); // TODO cache these solves if slow
 
       
@@ -467,14 +485,17 @@ class Vbglmm {
     for (int sample_index=0;sample_index<num_samples;sample_index++){
       double m=g_stuff.mean_prec[locus_index][sample_index]/g_stuff.prec[locus_index][sample_index]; 
       double v=1.0/g_stuff.prec[locus_index][sample_index]; 
-      double pred=sum(beta[locus_index]*x[locus_index]( sample_index, _ )); 
+      NumericVector x_ns=x[locus_index]( sample_index, _ );
+      double pred_to_flip=sum(beta[locus_index]*x_ns*to_flip[locus_index]); 
+      double pred_no_flip=sum(beta[locus_index]*x_ns*(-to_flip[locus_index]+1.0)); 
+      double pred=pred_to_flip*flips[locus_index][sample_index]+pred_no_flip; 
       if (flips_setting == FLIPS_STRUCTURED){
-	double err_noflip = pred - m; 
+	double err_noflip = (pred_no_flip + pred_to_flip) - m; 
 	err_noflip = err_noflip * err_noflip + v; 
 	m=g_flip.mean_prec[locus_index][sample_index]/g_flip.prec[locus_index][sample_index]; 
 	v=1.0/g_flip.prec[locus_index][sample_index]; 
 	double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
-      	double err_flip = pred + m; 
+      	double err_flip = (pred_no_flip - pred_to_flip) - m; 
 	err_flip = err_flip * err_flip + v; 
 	expected_err[locus_index]+=flip_prob * err_flip + (1.0-flip_prob) * err_noflip; 
       } else {
@@ -721,6 +742,7 @@ public:
     rev_model=as<int>(settings_list["rev.model"]); 
     coeff_regulariser=as<double>(settings_list["coeff.regulariser"]); 
     bool init_flips=as<bool>(settings_list["init.flips"]); 
+    List to_flip_list((SEXP)settings_list["toFlip"]); 
     List flips_rlist; 
     if (init_flips){
       flips_rlist=as<List>(settings_list["flips"]); 
@@ -763,9 +785,12 @@ public:
     }
     NumericVector precs(num_loci); 
     x.resize(num_loci); 
+    to_flip.resize(num_loci); 
     for (int locus_index=0;locus_index<num_loci;locus_index++){
       if (trace && ((locus_index % 1000)==0))
 	cout << "Loading... locus " << locus_index << "/" << num_loci << endl; 
+      NumericVector to_flipi((SEXP)to_flip_list[locus_index]); 
+      to_flip[locus_index]=as<NumericVector>(to_flipi); 
       NumericVector alti((SEXP)alt_rlist[locus_index]); 
       alt.push_back(alti); 
       NumericVector ni((SEXP)n_rlist[locus_index]); 
