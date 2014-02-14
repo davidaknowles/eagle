@@ -112,6 +112,7 @@ public :
 };
 
 class Vbglmm {
+  bool learn_betas; 
   int it, its_to_hold_flips_fixed; 
   bool debug;
   int num_loci;
@@ -390,6 +391,7 @@ class Vbglmm {
 	if (it < its_to_hold_flips_fixed){
 	  flips[locus_index][sample_index]=old_flips; 
 	} else {
+	  cout << "ll flip: " << flip_lb << " ll no flip " << noflip_lb << endl; 
 	  flips_log_odds[locus_index][sample_index]=flip_lb + flips_log_odds_prior - noflip_lb;
 	  flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
 	}
@@ -457,29 +459,31 @@ class Vbglmm {
 	cout << "Warning: lb got worse after optimizing q(g) and a, old:" << old_lb << " new: " << new_lb << endl;   	
       old_lb=new_lb; 
     }
-    NumericVector old_beta=beta[locus_index];
-    // update beta and means
-    // TODO: might want to check if determinant is too close to zero
-    MatrixXd xxX(num_cov,num_cov);
-    for (int ii=0;ii<num_cov;ii++)
-      for (int jj=0;jj<num_cov;jj++){
-	xx(ii,jj) += (coeff_regulariser>0.0 && ii==jj) ? coeff_regulariser : 0.0; 
-	xxX(ii,jj)=xx(ii,jj); 
-      }
-    LLT<MatrixXd> llt(xxX); // TODO cache these solves if slow
-
+    if (learn_betas){
+      NumericVector old_beta=beta[locus_index];
+      // update beta and means
+      // TODO: might want to check if determinant is too close to zero
+      MatrixXd xxX(num_cov,num_cov);
+      for (int ii=0;ii<num_cov;ii++)
+	for (int jj=0;jj<num_cov;jj++){
+	  xx(ii,jj) += (coeff_regulariser>0.0 && ii==jj) ? coeff_regulariser : 0.0; 
+	  xxX(ii,jj)=xx(ii,jj); 
+	}
+      LLT<MatrixXd> llt(xxX); // TODO cache these solves if slow
       
-    VectorXd xgv(num_cov);
-    for (int ii=0;ii<beta[locus_index].size();ii++)
-      xgv[ii]=xg[ii];
-    VectorXd res=llt.solve(xgv);
-    // beta[locus_index]=wrap(res);
-    for (int ii=0;ii<beta[locus_index].size();ii++)
-      beta[locus_index][ii]=res[ii]; 
-    if (!isfinite(beta[locus_index][0])) throw 1; 
-    if (debug && (num_cov==2)){
-      NumericVector check = twoByTwoSolve(xx,xg); 
-      if (abs(check[0]-beta[locus_index][0])>0.0001) throw 1; 
+      VectorXd xgv(num_cov);
+      for (int ii=0;ii<beta[locus_index].size();ii++)
+	xgv[ii]=xg[ii];
+      VectorXd res=llt.solve(xgv);
+      // beta[locus_index]=wrap(res);
+      
+      for (int ii=0;ii<beta[locus_index].size();ii++)
+	beta[locus_index][ii]=res[ii]; 
+      if (!isfinite(beta[locus_index][0])) throw 1; 
+      if (debug && (num_cov==2)){
+	NumericVector check = twoByTwoSolve(xx,xg); 
+	if (abs(check[0]-beta[locus_index][0])>0.0001) throw 1; 
+      }
     }
     expected_err[locus_index]=0.0; 
     for (int sample_index=0;sample_index<num_samples;sample_index++){
@@ -701,10 +705,10 @@ public:
 	cout << " lb: " << lb << endl; 
       }
       R_CheckUserInterrupt(); 
-      if (abs(lb-previous_it_lb) < converge_tol){
-	cout << "Converged!" << endl; 
+      /*if (abs(lb-previous_it_lb) < converge_tol){
+	if (trace) cout << "Converged!" << endl; 
 	break; 
-      }
+	}*/
       previous_it_lb=lb;
     }
 
@@ -730,7 +734,7 @@ public:
     List x_rlist(x_sexp);
     
     List settings_list(settings_sexp);
-    
+    learn_betas=as<bool>(settings_list["learnBetas"]); 
     debug=as<bool>(settings_list["debug"]);   
     num_loci = alt_rlist.size(); 
     max_its = as<int>(settings_list["max.iterations"]); 
@@ -755,7 +759,7 @@ public:
       flips_log1minusP = log(1.0-logistic(flips_log_odds_prior)); 
     }
  
-    cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
+    if (trace) cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
 
     NumericVector temp(num_loci); 
     rep_shapes = clone(temp);
@@ -858,7 +862,7 @@ public:
     g_stuff.init(alt,precs); 
     if (flips_setting == FLIPS_STRUCTURED)
       g_flip.init(alt,precs);
-    cout << "Loaded" << endl; 
+    if (trace) cout << "Loaded" << endl; 
   }
 };
 

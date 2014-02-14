@@ -15,6 +15,7 @@ default.settings = function(){
        convergence.tolerance=10.0,
        random.effect.variance=1.0,
        learn.rev=T,
+       learnBetas=T,
        rev.model="global",
        rep.global.rate=1.0,
        rep.global.shape=1.0,
@@ -59,7 +60,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       nullToFlip=lapply(xNull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
   if (!is.list(fullToFlip))
       fullToFlip=lapply(xFull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
-  
+
   s$coeff.regulariser=coeff.reg
   s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
   s$max.iterations=max.its
