@@ -38,7 +38,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   } else if (rev.model=="regression" || rev.model=="local.regression") {
       s$rev.model=as.integer(1)
       s$rep.slope=.6
-      s$rep.intercept=2.7
+      s$rep.intercept=4.5
   } else if (rev.model=="local") {
       s$rev.model=as.integer(2)
   } else {
@@ -60,9 +60,9 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       nullToFlip=lapply(xNull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
   if (!is.list(fullToFlip))
       fullToFlip=lapply(xFull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
-
+  
   s$coeff.regulariser=coeff.reg
-  s$normalised.depth=scale(log10(unlist(lapply(n,sum))))
+  s$normalised.depth=scale(log10(unlist(lapply(n,mean))))
   s$max.iterations=max.its
   s$allow.flips=flips
   s$null.first=null.first

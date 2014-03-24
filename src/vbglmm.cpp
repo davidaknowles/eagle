@@ -157,13 +157,10 @@ class Vbglmm {
   //vector<vector<NumericVector> > x; // covariate
   vector<NumericMatrix> x; 
 
-  NumericVector selective_flip(NumericVector &x_ns, NumericVector &index, double flip) {
-    NumericVector result(x_ns); 
-    for (int i=0;i<x_ns.size();i++){
-      if (index[i]==1.0){
-  	result[i] *= flip; 
-      }
-    }
+  NumericVector selective_flip(const NumericVector &x_ns, const NumericVector &index, double flip) {
+    NumericVector result(x_ns.size()); 
+    for (int i=0;i<x_ns.size();i++)
+      result[i] = (index[i]==1.0) ? x_ns[i]*flip : x_ns[i]; 
     return result; 
   }
 
@@ -391,7 +388,7 @@ class Vbglmm {
 	if (it < its_to_hold_flips_fixed){
 	  flips[locus_index][sample_index]=old_flips; 
 	} else {
-	  cout << "ll flip: " << flip_lb << " ll no flip " << noflip_lb << endl; 
+	  //cout << "ll flip: " << flip_lb << " ll no flip " << noflip_lb <<endl; 
 	  flips_log_odds[locus_index][sample_index]=flip_lb + flips_log_odds_prior - noflip_lb;
 	  flips[locus_index][sample_index]=1.0-2.0*logistic(flips_log_odds[locus_index][sample_index]);  
 	}
@@ -444,10 +441,9 @@ class Vbglmm {
       if (flips_setting == FLIPS_STRUCTURED){
 	double m_flip=g_flip.mean_prec[locus_index][sample_index]/g_flip.prec[locus_index][sample_index]; 
 	double flip_prob=.5*(1.0-flips[locus_index][sample_index]);
-	//out = (-flip_prob) * m_flip + (1.0-flip_prob) * m ; 
 	NumericVector x_flipped = selective_flip(x_ns, to_flip[locus_index], -1.0); 
-	xg += x_flipped * flip_prob * m_flip + x_ns * (1.0-flip_prob) * m; 
-	xx += flip_prob * outer(x_flipped) + (1.0 - flip_prob) * outer(x_ns); 
+	xg += (x_flipped * flip_prob * m_flip) + (x_ns * (1.0-flip_prob) * m); 
+	xx += (flip_prob * outer(x_flipped)) + ((1.0 - flip_prob) * outer(x_ns)); 
       } else {
 	xg += x_ns * flips[locus_index][sample_index] * m; 
 	xx += outer(x_ns);// TODO: cache XX
@@ -484,6 +480,7 @@ class Vbglmm {
 	NumericVector check = twoByTwoSolve(xx,xg); 
 	if (abs(check[0]-beta[locus_index][0])>0.0001) throw 1; 
       }
+      //cout << "beta: " << beta[locus_index][0] << "," << beta[locus_index][1] << endl; 
     }
     expected_err[locus_index]=0.0; 
     for (int sample_index=0;sample_index<num_samples;sample_index++){
@@ -705,10 +702,10 @@ public:
 	cout << " lb: " << lb << endl; 
       }
       R_CheckUserInterrupt(); 
-      /*if (abs(lb-previous_it_lb) < converge_tol){
+      if (abs(lb-previous_it_lb) < converge_tol){
 	if (trace) cout << "Converged!" << endl; 
 	break; 
-	}*/
+	}
       previous_it_lb=lb;
     }
 
@@ -732,18 +729,17 @@ public:
     List alt_rlist(alt_sexp); 
     List n_rlist(n_sexp);
     List x_rlist(x_sexp);
-    
     List settings_list(settings_sexp);
-    learn_betas=as<bool>(settings_list["learnBetas"]); 
-    debug=as<bool>(settings_list["debug"]);   
-    num_loci = alt_rlist.size(); 
+    learn_betas=as<bool>(settings_list["learnBetas"]);
+    debug=as<bool>(settings_list["debug"]);
+    num_loci = alt_rlist.size();
     max_its = as<int>(settings_list["max.iterations"]); 
     converge_tol = as<double>(settings_list["convergence.tolerance"]); 
     learn_rep=as<bool>(settings_list["learn.rev"]); 
     flips_setting=as<int>(settings_list["flips.setting"]);
     learn_flips_prior=as<bool>(settings_list["learn.flips.prior"]); 
     trace=as<bool>(settings_list["trace"]); 
-    rev_model=as<int>(settings_list["rev.model"]); 
+    rev_model=as<int>(settings_list["rev.model"]);
     coeff_regulariser=as<double>(settings_list["coeff.regulariser"]); 
     bool init_flips=as<bool>(settings_list["init.flips"]); 
     List to_flip_list((SEXP)settings_list["toFlip"]); 

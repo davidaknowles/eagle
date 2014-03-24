@@ -1,5 +1,5 @@
 ## Use the R_HOME indirection to support installations of multiple R version
 PKG_LIBS = `$(R_HOME)/bin/Rscript -e "Rcpp:::LdFlags()"` 
 #PKG_CPPFLAGS = -I ~/scratch/boost_1_51_0/boost/ -w -fpermissive
-CXXFLAGS = -O0 -g
-PKG_CPPFLAGS = -w -fpermissive -O0 -g
+CXXFLAGS = -O3
+PKG_CPPFLAGS = -w -fpermissive -O3

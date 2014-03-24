@@ -1,6 +1,7 @@
+# it: 99 re_var: 0.00119508 flips_prior_logodds 3.21112 lb: -1637.28
 require(vbglmm)
 set.seed(1)
-n.loci=2
+n.loci=1
 alt=list()
 n=list()
 xFull=list()
