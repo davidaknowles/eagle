@@ -123,6 +123,8 @@ class Vbglmm {
   int rev_model; 
   int flips_setting; 
   bool learn_flips_prior; 
+  bool return_aux_variables;
+  bool store_all_coeffs; 
   double coeff_regulariser;
   NumericVector normalised_depth; 
  
@@ -641,7 +643,8 @@ class Vbglmm {
 	  double err=pred-m; 
 	  Eerr2+=err*err+v; 
 	}
-	rep_rep=(double)num_loci/Eerr2; 
+	rep_rep=(double)num_loci/Eerr2;
+	// cout << "Eerr2: " << Eerr2 << endl; 
 	for (int locus_index=0;locus_index<num_loci;locus_index++){
 	  double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
 	  logrep_mp[locus_index]=pred_mean*rep_rep+delta_to_logrep_mp[locus_index]; 
@@ -676,7 +679,9 @@ class Vbglmm {
 public:
 
   SEXP run(){
-    double previous_it_lb=-1.0e30;   
+    double previous_it_lb=-1.0e30;
+    vector<double> mlPerIteration, repInterceptPerIteration, repSlopePerIt, repRepPerIt; 
+    List allCoefs; 
     for (it=0;it<max_its;it++){
       double lb = one_iteration(); 
       if (trace){ 
@@ -707,20 +712,50 @@ public:
 	break; 
 	}
       previous_it_lb=lb;
+      mlPerIteration.push_back(lb); 
+      repInterceptPerIteration.push_back(rep_intercept); 
+      repRepPerIt.push_back(rep_rep) ;
+      repSlopePerIt.push_back(rep_slope); 
+      if (store_all_coeffs){
+	allCoefs.push_back(clone(wrap(beta)));
+      } 
     }
 
-    return List::create(_("coeffs") = beta,
-			_("flips") = flips,
-			_("rep.slope") = rep_slope,
-			_("rep.intercept") = rep_intercept,
-			_("rep.rep")=rep_rep, 
-			_("rep.shapes") = rep_shapes,
-			_("rep.rates") = rep_rates, 
-			_("flips.logodds.prior") = flips_log_odds_prior,
-			_("random.effect.variance") = 1.0/random_effect_precision,
-			_("rep.global.shape") = global_rep_shape,
-			_("rep.global.rate") = global_rep_rate,
-			_("log.likelihoods") = lower_bounds);
+    List result_list=List::create(_("coeffs") = beta,
+				  _("mlPerIteration") = mlPerIteration, 
+				  _("repInterceptPerIteration")=repInterceptPerIteration,
+				  _("repSlopePerIt")=repSlopePerIt, 
+				  _("repRepPerIt")=repRepPerIt, 
+				  _("log.likelihoods") = lower_bounds);
+    if (flips_setting != FLIPS_NONE){
+      result_list["flips.logodds.prior"] = flips_log_odds_prior;
+      result_list["flips"]=flips; 
+    }
+    if (store_all_coeffs)
+      result_list["coeffsPerIteration"]=allCoefs; 
+    switch (rev_model){
+    case REV_GLOBAL:
+      result_list["random.effect.variance"] = 1.0/random_effect_precision;
+      break;
+    case REV_LOCAL:
+      result_list["rep.shapes"] = rep_shapes;
+      result_list["rep.rates"] = rep_rates; 
+      result_list["rep.global.shape"] = global_rep_shape;
+      result_list["rep.global.rate"] = global_rep_rate;
+      break;
+    case REV_LOCAL_REGRESSION:
+      result_list["rep.rep"]=rep_rep;
+    case REV_REGRESSION:
+      result_list["rep.slope"] = rep_slope;
+      result_list["rep.intercept"] = rep_intercept;
+      break;
+    }
+    
+    if (return_aux_variables){
+      result_list["aux.variables.mp"]=g_stuff.mean_prec;
+      result_list["aux.variables.p"]=g_stuff.prec;
+    }
+    return result_list; 
   }
 
   Vbglmm(SEXP alt_sexp, SEXP n_sexp, SEXP x_sexp, SEXP settings_sexp){
@@ -741,6 +776,8 @@ public:
     trace=as<bool>(settings_list["trace"]); 
     rev_model=as<int>(settings_list["rev.model"]);
     coeff_regulariser=as<double>(settings_list["coeff.regulariser"]); 
+    return_aux_variables=as<bool>(settings_list["return.aux.variables"]); 
+    store_all_coeffs=as<bool>(settings_list["storeAllCoeffs"]); 
     bool init_flips=as<bool>(settings_list["init.flips"]); 
     List to_flip_list((SEXP)settings_list["toFlip"]); 
     List flips_rlist; 
@@ -786,8 +823,8 @@ public:
     NumericVector precs(num_loci); 
     x.resize(num_loci); 
     to_flip.resize(num_loci); 
-    for (int locus_index=0;locus_index<num_loci;locus_index++){
-      if (trace && ((locus_index % 1000)==0))
+    for (int locus_index=0;locus_index<num_loci;locus_index++){ 
+     if (trace && ((locus_index % 1000)==0))
 	cout << "Loading... locus " << locus_index << "/" << num_loci << endl; 
       NumericVector to_flipi((SEXP)to_flip_list[locus_index]); 
       to_flip[locus_index]=as<NumericVector>(to_flipi); 

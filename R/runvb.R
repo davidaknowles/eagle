@@ -27,12 +27,15 @@ default.settings = function(){
        learn.flips.prior=T, 
 	coeff.regulariser=0.0,
 	init.flips=F,
+       return.aux.variables=F,
+       storeAllCoeffs=F,
        trace=T)
 }
 
-run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
-{
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA,return.aux.variables=F,storeAllCoeffs=F){
   s=default.settings()
+  s$return.aux.variables=return.aux.variables
+  s$storeAllCoeffs=storeAllCoeffs
   if (rev.model=="global"){
       s$rev.model=as.integer(0)
   } else if (rev.model=="regression" || rev.model=="local.regression") {
@@ -79,14 +82,16 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$learn.flips.prior=F
   s$flips.logodds.prior=res.first$flips.logodds.prior
   s$learn.rev=F
-  s$init.flips=T
+  s$init.flips=flips != "none"
   s$flips=res.first$flips
-  s$random.effect.variance=res.first$random.effect.var
-  s$rep.slope=res.first$rep.slope
-  s$rep.rep=res.first$rep.rep
-  s$rep.intercept=res.first$rep.intercept
-  s$rep.global.rate=res.first$rep.global.rate
-  s$rep.global.shape=res.first$rep.global.shape
+  if (! s$learn.rev ){
+      s$random.effect.variance=res.first$random.effect.var
+      s$rep.slope=res.first$rep.slope
+      s$rep.rep=res.first$rep.rep
+      s$rep.intercept=res.first$rep.intercept
+      s$rep.global.rate=res.first$rep.global.rate
+      s$rep.global.shape=res.first$rep.global.shape
+  }
   s$toFlip=if (null.first) fullToFlip else nullToFlip
   # run second model --------------
   res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
@@ -101,7 +106,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   df=mapply(FUN=function(a,b) ncol(a)-ncol(b),xFull,xNull)
   p=1.0-pchisq(log.like.ratios,df=df)
   q=p.adjust(p,method="fdr")
-  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null)
+  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,setings=s)
 }
 
 run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
