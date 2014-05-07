@@ -4,7 +4,8 @@
 #include <math.h> 
 #include <assert.h> 
 #include <cmath> 
-
+#include <limits>
+                                      
 #define REV_GLOBAL 0
 #define REV_REGRESSION 1
 #define REV_LOCAL 2
@@ -14,6 +15,8 @@
 #define FLIPS_HARD 1 
 #define FLIPS_SOFT 2
 #define FLIPS_STRUCTURED 3
+
+#define OVERRELAX 1
 
 using namespace std ;
 using namespace Rcpp ;
@@ -119,7 +122,7 @@ class Vbglmm {
   int max_its; 
   double converge_tol; 
   bool learn_rep; 
-  bool trace; 
+  int trace_every; 
   int rev_model; 
   int flips_setting; 
   bool learn_flips_prior; 
@@ -127,6 +130,7 @@ class Vbglmm {
   bool store_all_coeffs; 
   double coeff_regulariser;
   NumericVector normalised_depth; 
+double final_rep_rep; 
  
   NumericVector rep_shapes;
   NumericVector rep_rates; 
@@ -167,6 +171,7 @@ class Vbglmm {
   }
 
   double local_bound(int locus_index, int sample_index, double pred_times_flip, double Erep, double Elogrep, G_stuff &g, double pred_to_flip){
+    if (g.prec[locus_index][sample_index] <= 0.0) return -std::numeric_limits<double>::infinity();
     double v=1.0/g.prec[locus_index][sample_index]; 
     double m=g.mean_prec[locus_index][sample_index]*v; 
     double Elog1plus_exp_g=.5*g.a[locus_index][sample_index]*g.a[locus_index][sample_index]*v+log1plusexp(m+(1.0-2.0*g.a[locus_index][sample_index])*v*.5); 
@@ -231,6 +236,8 @@ class Vbglmm {
       lb-= (rep_shapes[locus_index]-1.0)*::Rf_digamma(rep_shapes[locus_index])+log(rep_rates[locus_index])-rep_shapes[locus_index]-::Rf_lgammafn(rep_shapes[locus_index]); 
       break;
     case REV_LOCAL_REGRESSION:
+if (logrep_p[locus_index] <= 0.0) 
+  return -std::numeric_limits<double>::infinity();
       double v=1.0/logrep_p[locus_index] ;
       double m=logrep_mp[locus_index]*v; 
       Erep = exp(m+.5*v); 
@@ -292,14 +299,14 @@ class Vbglmm {
     double new_local_bound; 
     double old_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
     // update q(g) [NB: this is still correct for random q(rep)]
-    g.prec[locus_index][sample_index]=p;
-    g.mean_prec[locus_index][sample_index]=mp;
+    double step=OVERRELAX ? 1.5 : 1.0; 
 
-    
+    g.prec[locus_index][sample_index]=step*p+(1.0-step)*old_prec;
+    g.mean_prec[locus_index][sample_index]=step*mp+(1.0-step)*old_mean_prec;
+
     new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
-    double step=1.0; 
     while (new_local_bound<old_local_bound){
-      step *= .5; 
+step *= (OVERRELAX ? .666666666 : .5); 
       g.prec[locus_index][sample_index]=step*p+(1.0-step)*old_prec;
       g.mean_prec[locus_index][sample_index]=step*mp+(1.0-step)*old_mean_prec;
       new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep, g, pred_to_flip); 
@@ -457,7 +464,7 @@ class Vbglmm {
 	cout << "Warning: lb got worse after optimizing q(g) and a, old:" << old_lb << " new: " << new_lb << endl;   	
       old_lb=new_lb; 
     }
-    if (learn_betas){
+    if (learn_betas) { // && it < 100){ // DEBUGDEBUG
       NumericVector old_beta=beta[locus_index];
       // update beta and means
       // TODO: might want to check if determinant is too close to zero
@@ -485,6 +492,7 @@ class Vbglmm {
       //cout << "beta: " << beta[locus_index][0] << "," << beta[locus_index][1] << endl; 
     }
     expected_err[locus_index]=0.0; 
+    //if (it < 100) // DEBUGDEBUG
     for (int sample_index=0;sample_index<num_samples;sample_index++){
       double m=g_stuff.mean_prec[locus_index][sample_index]/g_stuff.prec[locus_index][sample_index]; 
       double v=1.0/g_stuff.prec[locus_index][sample_index]; 
@@ -513,6 +521,7 @@ class Vbglmm {
     }
     total_terms[locus_index]=num_samples; 
     //    cout << expected_err[locus_index] << endl;
+    //if (it < 100) // DEBUGDEBUG
     switch (rev_model){
     case REV_LOCAL:
       rep_shapes[locus_index]=global_rep_shape+.5*num_samples; 
@@ -521,31 +530,30 @@ class Vbglmm {
     case REV_LOCAL_REGRESSION:
       double v=1.0/logrep_p[locus_index] ;
       double m=logrep_mp[locus_index]*v; 
-      double b=.5*expected_err[locus_index]; 
-      double aMinus1=.5*num_samples; 
-      double pf=b*exp(m+.5*v); 
-      double mpf=m*pf+aMinus1-pf; 
-      double old_pf=delta_to_logrep_p[locus_index]; 
-      double old_mpf=delta_to_logrep_mp[locus_index]; 
+      double old_p=logrep_p[locus_index]; 
+      double old_mp=logrep_mp[locus_index]; 
       double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
-      double step=1.0; 
+      double pf=.5*expected_err[locus_index]*exp(m+.5*v); 
+      double mpf=(m-1.0)*pf+.5*num_samples; 
+      double p=pf+rep_rep; 
+      double mp=mpf+pred_mean*rep_rep; 
+double step=OVERRELAX ? 1.5 : 1.0; 
       double old_lb=per_locus_bound(locus_index); 
-      logrep_mp[locus_index]=pred_mean*rep_rep+mpf; 
-      logrep_p[locus_index]=rep_rep+pf; 
+logrep_mp[locus_index]=step*mp+(1.0-step)*old_mp; 
+	logrep_p[locus_index]=step*p+(1.0-step)*old_p; 
+
       while (per_locus_bound(locus_index) < old_lb){
-	step*=0.5; 
-	logrep_mp[locus_index]=pred_mean*rep_rep+step*mpf+(1.0-step)*old_mpf; 
-	logrep_p[locus_index]=rep_rep+step*pf+(1.0-step)*old_pf; 
+step *= (OVERRELAX ? .666666666 : .5); 
+logrep_mp[locus_index]=step*mp+(1.0-step)*old_mp; 
+	logrep_p[locus_index]=step*p+(1.0-step)*old_p; 
 	if (step < 0.00001){
 	  if (debug) cout << "Warning: step size is very small updating q(log rep)" << endl; 
 	  step=0.0;
-	  logrep_mp[locus_index]=pred_mean*rep_rep+old_mpf; 
-	  logrep_p[locus_index]=rep_rep+old_pf;
+	  logrep_mp[locus_index]=old_mp; 
+	  logrep_p[locus_index]=old_p;
 	  break;
 	}
       }
-      delta_to_logrep_mp[locus_index]=step*mpf+(1.0-step)*old_mpf; 
-      delta_to_logrep_p[locus_index]=step*pf+(1.0-step)*old_pf; 
     }
 
   }
@@ -630,11 +638,20 @@ class Vbglmm {
 	xx(1,0)=xx(0,1); 
 	xx(1,1)=(double)num_loci; 
 	NumericVector temp=twoByTwoSolve(xx,xm); 
-	rep_slope=temp[0];
-	rep_intercept=temp[1];
+	if (1) { // (it<100){ // DEBUGDEBUG
+	  rep_slope=temp[0];
+	  rep_intercept=temp[1];
+	}
 	if (isnan(rep_slope)) {
 	  cout << xx(0,0) << " " << xx(1,0) << " " << xx(1,1) << " " << xm[0] << " " << xm[1] << endl ;
 	  throw 1; 
+	}
+	
+	if (debug){
+	  lb=lower_bound(); 
+	  if ((lb+1.0e-3)<old_lb)
+	    cout << "Warning: lb got worse after optimizing rep slope/intercept, old:" << old_lb << " new:" << lb << endl; 
+	  old_lb=lb; 
 	}
 	for (int locus_index=0;locus_index<num_loci;locus_index++){
 	  double v=1.0/logrep_p[locus_index];
@@ -643,15 +660,19 @@ class Vbglmm {
 	  double err=pred-m; 
 	  Eerr2+=err*err+v; 
 	}
-	rep_rep=(double)num_loci/Eerr2;
+        
+//if (it > 500)
+  //  rep_rep=final_rep_rep; 
+  rep_rep=((double)num_loci+1.0)/(Eerr2+1.0);
 	// cout << "Eerr2: " << Eerr2 << endl; 
-	for (int locus_index=0;locus_index<num_loci;locus_index++){
+	/*	for (int locus_index=0;locus_index<num_loci;locus_index++){
 	  double pred_mean=rep_slope*normalised_depth[locus_index]+rep_intercept; 
 	  logrep_mp[locus_index]=pred_mean*rep_rep+delta_to_logrep_mp[locus_index]; 
 	  logrep_p[locus_index]=rep_rep+delta_to_logrep_p[locus_index]; 
-	}
+	  }*/
 	lb=lower_bound(); 
-
+	
+	if (debug && ((lb+1.0e-3)<old_lb)) cout << "Warning: lb got worse after optimizing reprep, old:" << old_lb << " new:" << lb << endl; 
       }
       
       if (!isfinite(random_effect_precision)) { cerr << "err " << expected_err << " n " << total_terms << endl; throw 1; }
@@ -679,12 +700,14 @@ class Vbglmm {
 public:
 
   SEXP run(){
-    double previous_it_lb=-1.0e30;
+double previous_it_lb=lower_bound();
     vector<double> mlPerIteration, repInterceptPerIteration, repSlopePerIt, repRepPerIt; 
     List allCoefs; 
     for (it=0;it<max_its;it++){
       double lb = one_iteration(); 
-      if (trace){ 
+bool converged= abs(lb-previous_it_lb) < converge_tol;
+
+if ((it % trace_every) == 0 || converged){ 
 	cout << "it: " << it; 
 	switch (rev_model){
 	case REV_GLOBAL:
@@ -704,13 +727,14 @@ public:
 	}
 	if (flips_setting != FLIPS_NONE)
 	  cout << " flips_prior_logodds " << flips_log_odds_prior ; 
-	cout << " lb: " << lb << endl; 
+cout << " lb: " << lb << " change:" << lb-previous_it_lb << " (tol=" << converge_tol << ")" <<  endl; 
       }
       R_CheckUserInterrupt(); 
-      if (abs(lb-previous_it_lb) < converge_tol){
-	if (trace) cout << "Converged!" << endl; 
-	break; 
-	}
+if (converged){
+cout << "Converged!" << endl; 
+break; 
+}
+
       previous_it_lb=lb;
       mlPerIteration.push_back(lb); 
       repInterceptPerIteration.push_back(rep_intercept); 
@@ -773,7 +797,7 @@ public:
     learn_rep=as<bool>(settings_list["learn.rev"]); 
     flips_setting=as<int>(settings_list["flips.setting"]);
     learn_flips_prior=as<bool>(settings_list["learn.flips.prior"]); 
-    trace=as<bool>(settings_list["trace"]); 
+    trace_every=as<int>(settings_list["traceEvery"]); 
     rev_model=as<int>(settings_list["rev.model"]);
     coeff_regulariser=as<double>(settings_list["coeff.regulariser"]); 
     return_aux_variables=as<bool>(settings_list["return.aux.variables"]); 
@@ -792,7 +816,7 @@ public:
       flips_log1minusP = log(1.0-logistic(flips_log_odds_prior)); 
     }
  
-    if (trace) cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
+    cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
 
     NumericVector temp(num_loci); 
     rep_shapes = clone(temp);
@@ -814,7 +838,9 @@ public:
       break;
     case REV_LOCAL_REGRESSION: // fall through is delibrate
       rep_rep=as<double>(settings_list["rep.rep"]); 
-    case REV_REGRESSION:
+//final_rep_rep=rep_rep; 
+//rep_rep=1.0; // DEBUGDEBUG
+ case REV_REGRESSION:
       normalised_depth=as<NumericVector>(settings_list["normalised.depth"]); 
       rep_intercept=as<double>(settings_list["rep.intercept"]) ; 
       rep_slope=as<double>(settings_list["rep.slope"]); 
@@ -824,7 +850,7 @@ public:
     x.resize(num_loci); 
     to_flip.resize(num_loci); 
     for (int locus_index=0;locus_index<num_loci;locus_index++){ 
-     if (trace && ((locus_index % 1000)==0))
+     if (trace_every<10000 && ((locus_index % 1000)==0))
 	cout << "Loading... locus " << locus_index << "/" << num_loci << endl; 
       NumericVector to_flipi((SEXP)to_flip_list[locus_index]); 
       to_flip[locus_index]=as<NumericVector>(to_flipi); 
@@ -895,7 +921,7 @@ public:
     g_stuff.init(alt,precs); 
     if (flips_setting == FLIPS_STRUCTURED)
       g_flip.init(alt,precs);
-    if (trace) cout << "Loaded" << endl; 
+    if (trace_every < 10000) cout << "Loaded" << endl; 
   }
 };
 

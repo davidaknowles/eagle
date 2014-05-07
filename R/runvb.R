@@ -29,10 +29,10 @@ default.settings = function(){
 	init.flips=F,
        return.aux.variables=F,
        storeAllCoeffs=F,
-       trace=T)
+       traceEvery=1)
 }
 
-run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA,return.aux.variables=F,storeAllCoeffs=F){
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,traceEvery=1,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA,return.aux.variables=F,storeAllCoeffs=F,repRep=1){
   s=default.settings()
   s$return.aux.variables=return.aux.variables
   s$storeAllCoeffs=storeAllCoeffs
@@ -42,6 +42,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       s$rev.model=as.integer(1)
       s$rep.slope=.6
       s$rep.intercept=4.5
+      s$rep.rep=repRep # note: not used for "regression", equivalent to repRep=Inf
   } else if (rev.model=="local") {
       s$rev.model=as.integer(2)
   } else {
@@ -71,17 +72,17 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$null.first=null.first
   s$convergence.tolerance=tol
   s$debug=debug
-  s$trace=trace
+  s$traceEvery=traceEvery
   s$learn.flips.prior=T
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
   s$toFlip=if (null.first) nullToFlip else fullToFlip
   # run first model -------------
   res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
-  
+
   s$learn.flips.prior=F
   s$flips.logodds.prior=res.first$flips.logodds.prior
-  s$learn.rev=F
+  s$learn.rev=F 
   s$init.flips=flips != "none"
   s$flips=res.first$flips
   if (! s$learn.rev ){
@@ -93,6 +94,10 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       s$rep.global.shape=res.first$rep.global.shape
   }
   s$toFlip=if (null.first) fullToFlip else nullToFlip
+
+  # rerun first model with fixed rev model? (doesn't make much difference)
+  # res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
+  
   # run second model --------------
   res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
   if (null.first){
@@ -106,7 +111,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   df=mapply(FUN=function(a,b) ncol(a)-ncol(b),xFull,xNull)
   p=1.0-pchisq(log.like.ratios,df=df)
   q=p.adjust(p,method="fdr")
-  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,setings=s)
+  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s)
 }
 
 run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
