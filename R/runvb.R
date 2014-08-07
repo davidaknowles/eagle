@@ -96,7 +96,8 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   s$toFlip=if (null.first) fullToFlip else nullToFlip
 
   # rerun first model with fixed rev model? (doesn't make much difference)
-  # res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
+  res.firstOld=res.first
+  res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
   
   # run second model --------------
   res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
@@ -111,7 +112,7 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
   df=mapply(FUN=function(a,b) ncol(a)-ncol(b),xFull,xNull)
   p=1.0-pchisq(log.like.ratios,df=df)
   q=p.adjust(p,method="fdr")
-  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s)
+  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s,res.firstOld=res.firstOld)
 }
 
 run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)

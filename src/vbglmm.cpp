@@ -707,7 +707,7 @@ double previous_it_lb=lower_bound();
       double lb = one_iteration(); 
 bool converged= abs(lb-previous_it_lb) < converge_tol;
 
-if ((it % trace_every) == 0 || converged){ 
+ if ((trace_every<10000) && ((it % trace_every) == 0 || converged)){ 
 	cout << "it: " << it; 
 	switch (rev_model){
 	case REV_GLOBAL:
@@ -730,10 +730,10 @@ if ((it % trace_every) == 0 || converged){
 cout << " lb: " << lb << " change:" << lb-previous_it_lb << " (tol=" << converge_tol << ")" <<  endl; 
       }
       R_CheckUserInterrupt(); 
-if (converged){
-cout << "Converged!" << endl; 
-break; 
-}
+      if (converged && (trace_every < 10000)){
+	cout << "Converged!" << endl; 
+	break; 
+      }
 
       previous_it_lb=lb;
       mlPerIteration.push_back(lb); 
@@ -816,7 +816,8 @@ break;
       flips_log1minusP = log(1.0-logistic(flips_log_odds_prior)); 
     }
  
-    cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
+    if (trace_every < 10000)
+      cout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
 
     NumericVector temp(num_loci); 
     rep_shapes = clone(temp);
