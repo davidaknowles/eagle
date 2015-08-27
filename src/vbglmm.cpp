@@ -110,7 +110,6 @@ class Vbglmm {
   int max_its; 
  
   double converge_tol; 
-  int switchtoem; 
   bool learn_rep, learnRepRep; 
   int trace_every; 
   int rev_model; 
@@ -167,7 +166,7 @@ class Vbglmm {
     lb+=-.5*Erep*Eerr2+.5*Elogrep; 
     // - <log q>
     lb+=.5*(1.0+log(v)); 
-    if (isnan(lb)) throw LB_NAN_ERROR;  
+    if (isnan(lb)) ::Rf_error("Lower bound is nan"); 
     return lb; 
   }
 
@@ -208,7 +207,7 @@ class Vbglmm {
       lb+=.5*(1.0+log(v)); 
       break;
      }
-    if (Erep==0.0) throw 1; 
+    if (Erep==0.0) ::Rf_error("Expected random effect precision is 0"); 
     //if (coeff_regulariser != 0.0)
     //  lb -= 
     for (int sample_index=0;sample_index<alt[locus_index].size();sample_index++){
@@ -223,19 +222,6 @@ class Vbglmm {
     for (int locus_index=0;locus_index<num_loci;locus_index++)
       lower_bounds[locus_index]=per_locus_bound(locus_index); 
     return accumulate(lower_bounds.begin(),lower_bounds.end(),0.0); 
-  }
-
-  double robust_lower_bound(){
-    double lb=0.0;
-    try {
-      lb=lower_bound(); 
-    } 
-    catch (int e) {
-      if (e != LB_NAN_ERROR)
-	throw 1; 
-      lb=-std::numeric_limits<double>::infinity();
-    }
-    return lb; 
   }
 
   NumericVector lower_bound_grad(double rep_slope, double rep_intercept, NumericVector &normalised_depth, NumericVector &expected_err, NumericVector &total_terms, NumericMatrix &hess) {
@@ -293,7 +279,7 @@ class Vbglmm {
     // update a
     //double check=.5*a_ns*a_ns*v+log1plusexp(m+(1.0-2.0*a_ns)*v*.5); 
     a[locus_index][sample_index]=logistic(m+(1.0-2.0*a_ns)*v*.5);
-    if ( isnan( a[locus_index][sample_index] ) ) throw 1; 
+    if ( isnan( a[locus_index][sample_index] ) ) ::Rf_error("Auxiliary variable a is nan"); 
     double old_lb = new_local_bound; 
     new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep);  
 
@@ -314,10 +300,10 @@ class Vbglmm {
       NumericVector x_ns=x[locus_index][sample_index]; 
       double pred=sum(beta[locus_index]*x_ns);  
       double err=pred-m;
-      if (!isfinite(err)) throw 1;
+      if (!isfinite(err)) ::Rf_error("Residual error is infinite"); 
       expected_err[locus_index]+=err*err+v;  
     }
-    if (!isfinite(expected_err[locus_index])) throw 1; 
+    if (!isfinite(expected_err[locus_index])) ::Rf_error("Total esidual error is infinite"); 
     total_terms[locus_index]=num_samples; 
   }
 
@@ -370,34 +356,13 @@ class Vbglmm {
       MatrixXd xx=MatrixXd::Zero(num_cov,num_cov); 
       
       VectorXd res; 
-      if (it < switchtoem){
-	VectorXd x_ns=VectorXd::Zero( num_cov ); 
-	for (int sample_index=0;sample_index<num_samples;sample_index++){
-	  if (n[locus_index][sample_index]>0){
-	    NumericVector x_nv=x[locus_index][sample_index]; 
-	    for (int ii=0;ii<num_cov;ii++)
-	      x_ns[ii]=x_nv[ii]; 
-	    double regression_mean=sum(beta[locus_index]*x_nv); 
-	    double pf=prec[locus_index][sample_index]-local_rep; 
-	    double mpf=mean_prec[locus_index][sample_index]-regression_mean*local_rep; 
-	    double R=pf/(pf+local_rep); 
-	    xgv += R * mpf * x_ns; 
-	    xx += R * pf * ( x_ns * x_ns.transpose() ); 
-	    assert( R * pf > 0 );
-	  }
-	}
-	LDLT<MatrixXd> llt(xx); 
-	res=llt.solve(xgv); 
-      } else {
-	for (int ii=0;ii<num_cov;ii++)
-	  xgv[ii]=xg[ii]; 
-	res=choleskys[locus_index].solve(xgv);
-      }
-      // beta[locus_index]=wrap(res);
-      
+      for (int ii=0;ii<num_cov;ii++)
+	xgv[ii]=xg[ii]; 
+      res=choleskys[locus_index].solve(xgv);
+            
       for (int ii=0;ii<beta[locus_index].size();ii++)
 	beta[locus_index][ii]=res[ii]; 
-      if (!isfinite(beta[locus_index][0])) throw 1; 
+      if (!isfinite(beta[locus_index][0])) ::Rf_error("Regression coefficient is infinite"); 
       /*if (debug && (num_cov==2)){
 	NumericVector check = twoByTwoSolve(xx,xg); 
 	if (abs(check[0]-beta[locus_index][0])>0.0001) throw 1; 
@@ -420,7 +385,7 @@ class Vbglmm {
     case REV_LOCAL:
       rep_shapes[locus_index]=global_rep_shape+.5*(double)num_samples; 
       rep_rates[locus_index]=global_rep_rate+.5*expected_err[locus_index]; 
-      if (!isfinite(rep_rates[locus_index])) throw 1; 
+      if (!isfinite(rep_rates[locus_index])) ::Rf_error("b parameter is infinite");
       break; 
     case REV_LOCAL_REGRESSION:
       double v=1.0/logrep_p[locus_index] ;
@@ -550,7 +515,7 @@ class Vbglmm {
 	}
 	if (isnan(rep_slope)) {
 	  Rcout << xx(0,0) << " " << xx(1,0) << " " << xx(1,1) << " " << xm[0] << " " << xm[1] << endl ;
-	  throw 1; 
+	  ::Rf_error("Slope is nan");
 	}
 	
 	if (debug){
@@ -574,7 +539,7 @@ class Vbglmm {
 	if (debug && ((lb+1.0e-3)<old_lb)) Rcout << "Warning: lb got worse after optimizing reprep, old:" << old_lb << " new:" << lb << endl; 
       }
       
-      if (!isfinite(random_effect_precision)) { cerr << "err " << expected_err << " n " << total_terms << endl; throw 1; }
+      if (!isfinite(random_effect_precision)) { cerr << "err " << expected_err << " n " << total_terms << endl; ::Rf_error("Random effect precision is nan"); }
       
       if (debug && ((lb+1.0e-3)<old_lb)) Rcout << "Warning: lb got worse after optimizing random effect var, old:" << old_lb << " new:" << lb << endl; 
     } else {
@@ -700,8 +665,7 @@ public:
     coeff_regulariser=as<double>(settings_list["coeff.regulariser"]); 
     return_aux_variables=as<bool>(settings_list["return.aux.variables"]); 
     store_all_coeffs=as<bool>(settings_list["storeAllCoeffs"]); 
-    switchtoem=as<int>(settings_list["switchtoem"]);
-     
+
     if (trace_every < 10000)
       Rcout << "VBGLMM: num_loci: " << num_loci << " max_its: " << max_its << " tolerance: " << converge_tol << endl; 
 

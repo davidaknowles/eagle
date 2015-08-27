@@ -28,7 +28,8 @@ default.settings = function(){
        rerunFirst=F, # whether to rerun the first model after learning hyperparameters (not used)
        traceEvery=1, # traceEvery: how often to output convergence info to stdout
        learnRepRep=T, # whether to learn v in the local.regression model
-       learnBetas=T, # whether to learn the regression coefficients)
+       learnBetas=T # whether to learn the regression coefficients)
+  )
 }
 
 # alt: list (over exonic SNPs) of alternative read counts
