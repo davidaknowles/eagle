@@ -36,7 +36,7 @@ logistic=function(x) 1/(1+exp(-x))
 }
 
 #---------------- run the model --------------------------
-s=default.settings()
+s=eagle.settings()
 s$debug=F
 #s$rev.model=as.integer(3) # local regression
 s$rev.model=as.integer(2)
@@ -52,7 +52,7 @@ s$rep.global.rate=0.0033
 
 s$traceEvery=1
 
-system.time( res <- run.helper(alt,n,xFull,xNull,s) ) # 4s
+system.time( res <- eagle.helper(alt,n,xFull,xNull,s) ) # 4s
 
 # save(file="testNoRerun.RData",res,trueBeta)
 cat("p-values for true hits:",res$p.values[trueBeta!=0],"\n")

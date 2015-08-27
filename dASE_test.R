@@ -38,7 +38,6 @@ for (i in 1:n.loci){
 #---------------- run the model --------------------------
 res=run.all(alt,n,xFull,xNull,max.its=100000,tol=0.0001,debug=F,flips="none",learn.rev=T,traceEvery=1,rev.model="local.regression",null.first=T,storeAllCoeffs=F)
 
-# save(file="testNoRerun.RData",res,trueBeta)
 cat("p-values for true hits:",res$p.values[trueBeta!=0],"\n")
 cat("true hit betas: ",trueBeta[trueBeta!=0],"\n")
 
