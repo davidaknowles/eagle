@@ -1,38 +1,54 @@
+packageName="eagle"
+
+xToListList = function(x) {
+    lapply( x, function(g) lapply( as.list(1:nrow(g)), function(h) g[h,] ))
+}
 
 run.vb = function(alt,n,x,settings)
 {
-  .Call("runvb", alt, n, x, settings, PACKAGE = "vbglmm" )
-}
-
-fit.null = function(alt,n,max.its=1000,tol=10.0,random.effect.var=1.0,debug=F)
-{
-  .Call("fitnull", alt, n, max.its, tol, random.effect.var, debug, PACKAGE = "vbglmm" )
+    .Call("runvb", alt, n, x, settings, PACKAGE = packageName )
 }
 
 default.settings = function(){
-  list(debug=F,
-       max.iterations=1000,
-       convergence.tolerance=10.0,
-       random.effect.variance=1.0,
-       learn.rev=T,
-       learnBetas=T,
-       rev.model="global",
-       rep.global.rate=1.0,
-       rep.global.shape=1.0,
-       rep.slope=0.0,
-       rep.intercept=0.0,
-       rep.rep=1.0,
-       flips.setting=0,
-       flips.logodds.prior=-2.0,
-       learn.flips.prior=T, 
-	coeff.regulariser=0.0,
-	init.flips=F,
-       return.aux.variables=F,
-       storeAllCoeffs=F,
-       traceEvery=1)
+  list(debug=F, # output debugging information? Also performs additional checks. 
+       max.iterations=1000, # maximum iterations of EM to run
+       convergence.tolerance=0.1, # consider EM to have converged if the change in the lower bound is less than this
+       random.effect.variance=1.0, # initial random effect variance
+       learn.rev=F, # whether to learn the overdispersion hyperparameters a,b
+       rev.model="local", # rev.model: one of c("global","regression","local","local.regression"). global: single fixed random effect variance across all exonic SNPs (not recommended). regression: random effect variance is log-linear in the log average read depth (not recommended). local: random effect variance at exonic SNP s is v_s ~ InverseGamma(a,b) [recommended]. local.regression: log(rev)  ~ N(mt+c,v) [gives similar results to "local" but not as well calibrated]
+       rep.global.shape=1.1, # the shape parameter (a in the manuscript) in the default "local" overdispersion prior model
+       rep.global.rate=0.0033, # the rate parameter (b in the manuscript) in the default "local" overdispersion prior model
+       rep.slope=0.0, # m in the local.regression overdispersion model log(rev)  ~ N(mt+c,v)
+       rep.intercept=0.0, # c in the local.regression overdispersion model log(rev)  ~ N(mt+c,v)
+       rep.rep=1.0, # 1/v in the local.regression overdispersion model log(rev)  ~ N(mt+c,v)
+       coeff.regulariser=0.0,#  whether to regularize the regression coefficents with a term -coef.reg |beta|^2
+       return.aux.variables=F, # whether to return the auxiliary variables g (only used for debugging)
+       storeAllCoeffs=F, # whether to store coefficients throughout the EM algorithm (for debugging)
+       null.first=T, # whether to run the null or alternative model first. Only matters if learning the overdispersion hyperparamters, in which case these are learnt on whichever is run first, and fixed for the second. 
+       rerunFirst=F, # whether to rerun the first model after learning hyperparameters (not used)
+       traceEvery=1, # traceEvery: how often to output convergence info to stdout
+       learnRepRep=T, # whether to learn v in the local.regression model
+       learnBetas=T, # whether to learn the regression coefficients)
 }
 
-run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,traceEvery=1,rev.model="global",null.first=T,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA,return.aux.variables=F,storeAllCoeffs=F,repRep=1){
+# alt: list (over exonic SNPs) of alternative read counts
+# n: list (over exonics SNPs) of total read counts
+# xFull: list of design matrices for the alternative hypothesis (e.g. including environment)
+# xNull: list of design matrices for the null hypothesis
+# s: list of settings. Create using default.settings() and then customize. 
+# max.its: maximum iterations of EM to run
+# tol: consider EM to have converged if the change in the lower bound is less than this
+# debug: output debugging information? Also performs additional checks. 
+# learn.rev: whether to learn the overdispersion hyperparameters (e.g. a,b) or hold them fixed
+# rev: random effect variance
+# traceEvery: how often to output convergence info to stdout
+# rev.model: one of c("global","regression","local","local.regression"). global: single fixed random effect variance across all exonic SNPs (not recommended). regression: random effect variance is log-linear in the log average read depth (not recommended). local: random effect variance at exonic SNP s is v_s ~ InverseGamma(a,b) [recommended]. local.regression: log(rev)  ~ N(mt+c,v) [gives similar results to "local" but not as well calibrated]
+# null.first: whether to run the null or alternative model first. Only matters if learning the overdispersion hyperparamters, in which case these are learnt on whichever is run first, and fixed for the second. 
+# coeff.reg: whether to regularize the regression coefficents with a term -coef.reg |beta|^2
+# return.aux.variables: whether to return the auxiliary variables g (only used for debugging)
+# storeAllCoeffs: whether to store coefficients throughout the EM algorithm (for debugging)
+# repRep: for local.regression the inital value of 1/v
+run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,learn.rev=T,rev=1.0,traceEvery=1,rev.model="global",null.first=T,coeff.reg=0.0,return.aux.variables=F,storeAllCoeffs=F,repRep=1){
   s=default.settings()
   s$return.aux.variables=return.aux.variables
   s$storeAllCoeffs=storeAllCoeffs
@@ -49,103 +65,71 @@ run.all = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",
       error("Invalid random effect variance model: options are global, local, regression, local.regression")
   }
   if (rev.model=="local.regression") s$rev.model=as.integer(3)
-  if (flips == "none"){
-      s$flips.setting=0
-  } else if (flips == "hard"){
-      s$flips.setting=1
-  } else if (flips == "soft"){
-      s$flips.setting=2
-  } else if (flips == "structured") {
-      s$flips.setting=3
-  } else {
-      error("Invalid setting of flips: options are none, hard, soft")
-  }
-  if (!is.list(nullToFlip))
-      nullToFlip=lapply(xNull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
-  if (!is.list(fullToFlip))
-      fullToFlip=lapply(xFull,function(xHere) numeric(ncol(xHere)) + if (flips == "none") 0 else 1) 
-  
   s$coeff.regulariser=coeff.reg
   s$normalised.depth=scale(log10(unlist(lapply(n,mean))))
   s$max.iterations=max.its
-  s$allow.flips=flips
   s$null.first=null.first
   s$convergence.tolerance=tol
   s$debug=debug
   s$traceEvery=traceEvery
-  s$learn.flips.prior=T
   s$learn.rev=learn.rev
   s$random.effect.variance=rev
-  s$toFlip=if (null.first) nullToFlip else fullToFlip
+
+  run.helper(alt,n,xFull,xNull,s)
+}
+
+# alt: list (over exonic SNPs) of alternative read counts
+# n: list (over exonics SNPs) of total read counts
+# xFull: list of design matrices for the alternative hypothesis (e.g. including environment)
+# xNull: list of design matrices for the null hypothesis
+# s: list of settings. Create using default.settings() and then customize. 
+run.helper = function(alt,n,xFull,xNull,s){
+
+    if (is.null(s$normalised.depth))
+        s$normalised.depth=scale(log10(unlist(lapply(n,mean))))
+
+  stopifnot( !is.nan(s$normalised.depth))
+    
+  xFullList=xToListList(xFull)
+  xNullList=xToListList(xNull)
+    
   # run first model -------------
-  res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
+  timeFirst = system.time( res.first <- run.vb(alt,n,if (s$null.first) xNullList else xFullList,s) )[1]
 
-  s$learn.flips.prior=F
-  s$flips.logodds.prior=res.first$flips.logodds.prior
-  s$learn.rev=F 
-  s$init.flips=flips != "none"
-  s$flips=res.first$flips
-  if (! s$learn.rev ){
-      s$random.effect.variance=res.first$random.effect.var
-      s$rep.slope=res.first$rep.slope
-      s$rep.rep=res.first$rep.rep
-      s$rep.intercept=res.first$rep.intercept
-      s$rep.global.rate=res.first$rep.global.rate
-      s$rep.global.shape=res.first$rep.global.shape
-  }
-  s$toFlip=if (null.first) fullToFlip else nullToFlip
-
+  # hold global dispersion parameters fixed
+  s$learn.rev=F
+  s$random.effect.variance=res.first$random.effect.var
+  s$rep.slope=res.first$rep.slope
+  s$rep.rep=res.first$rep.rep
+  s$rep.intercept=res.first$rep.intercept
+  s$rep.global.rate=res.first$rep.global.rate
+  s$rep.global.shape=res.first$rep.global.shape
+  
   # rerun first model with fixed rev model? (doesn't make much difference)
-  res.firstOld=res.first
-  res.first = run.vb(alt,n,if (null.first) xNull else xFull,s)
+  res.firstOld=NULL
+  if (s$rerunFirst){
+      res.firstOld=res.first
+      res.first = run.vb(alt,n,if (s$null.first) xNullList else xFullList,s)
+  }
   
   # run second model --------------
-  res.second = run.vb(alt,n,if (null.first) xFull else xNull,s)
-  if (null.first){
+  timeSecond = system.time( res.second <- run.vb(alt,n,if (s$null.first) xFullList else xNullList,s) )[1]
+  if (s$null.first){
       res.full=res.second
       res.null=res.first
   } else {
       res.full=res.first
       res.null=res.second
   }
-  log.like.ratios=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
+  
+  like.ratios.statistics=2.0*(res.full$log.likelihoods-res.null$log.likelihoods)
+  # degress of freedom calculation
   df=mapply(FUN=function(a,b) ncol(a)-ncol(b),xFull,xNull)
-  p=1.0-pchisq(log.like.ratios,df=df)
+  # calculate p-values
+  p=pchisq(like.ratios.statistics,df=df,lower.tail=F)
+  # calculate q-values
   q=p.adjust(p,method="fdr")
-  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s,res.firstOld=res.firstOld)
+  list(p.values=p,q.values=q,res.full=res.full,res.null=res.null,settings=s,timeFirst=timeFirst,timeSecond=timeSecond,res.firstOld=res.firstOld)
 }
 
-run.perms = function(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,flips="none",learn.rev=T,rev=1.0,trace=T,rev.model="global",null.first=F,n.perms=10,coeff.reg=0.0,fullToFlip=NA,nullToFlip=NA)
-{
-  res=list()
-  for (perm in 1:n.perms){
-      cat("Running permutation number ",perm," of ",n.perms," ---------------\n")
-      for (i in 1:length(xFull)) {
-          to.permute=if (ncol(xFull[[i]])>=4) c(1,4) else 1
-          xFull[[i]][,to.permute]=xFull[[i]][sample.int(nrow(xFull[[i]])),to.permute]
-      }
-      res[[perm]]=run.all(alt,n,xFull,xNull,max.its=max.its,tol=tol,debug=debug,flips=flips,learn.rev=learn.rev,rev=rev,trace=trace,rev.model=rev.model,null.first=null.first,coeff.reg=coeff.reg,nullToFlip=nullToFlip,fullToFlip=fullToFlip)
-  }
-  res
-}
 
-## run.perms = function(alt,n,x,max.its=1000,tol=10.0,debug=F,nperm=1000,fdr=0.05)
-## {
-##   res = run.vb(alt,n,x,max.its=max.its,tol=tol,debug=debug)
-##   res.null = fit.null(alt,n,max.its=max.its,tol=tol,random.effect.var=res$random.effect.var,debug=debug)
-##   log.like.ratios=2.0*(res$log.likelihoods-res.null$log.likelihoods)
-##   p=1.0-pchisq(log.like.ratios,df=1)
-##   q=p.adjust(p,method="fdr")
-##   hits=q<0.05
-##   alt.hits=alt[hits]
-##   n.hits=n[hits]
-##   x.hits=x[hits]
-##   res.perm=list()
-##   for (i in 1:nperm){
-##       cat("perm ",i,"\n")
-##       for (j in 1:length(x.hits))
-##           x.hits[[j]]=sample(x.hits[[j]])
-##       res.perm[[i]] = run.vb(alt.hits,n.hits,x.hits,rev=res$random.effect.var,max.its=max.its,tol=tol,debug=debug)
-##   }
-##   list(p.values=p,q.values=q,res.full=res,res.null=res.null,hits=hits,res.perm=res.perm)
-## }

@@ -1,2 +1,2 @@
-useDynLib(vbglmm)
+useDynLib(eagle)
 exportPattern("^[[:alpha:]]+")
