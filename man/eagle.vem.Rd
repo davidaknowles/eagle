@@ -15,7 +15,7 @@ eagle.vem(alt,n,x,settings)
   \item{alt}{ list (over exonic SNPs) of alternative read counts}
   \item{n}{ list (over exonics SNPs) of total read counts}
   \item{x}{list of design matrices for each exonic SNP}
-  \item{settings}{list of settings. Create using default.settings() and then customize. }
+  \item{settings}{list of settings. Create using \code{\link{eagle.settings}}() and then customize. }
 }
 \details{
 }

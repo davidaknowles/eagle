@@ -8,7 +8,9 @@ Run the full EAGLE procedure.
 The usual usage is to 1) fit the null model across exonic SNPs, while learning the overdispersion hyperparameters, 2) fit the alternative models holding these hyperparameters fixed 3) perform likelihood ratio tests for each locus 
 }
 \usage{
-eagle(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,learn.rev=T,rev=1.0,traceEvery=1,rev.model="global",null.first=T,coeff.reg=0.0,return.aux.variables=F,storeAllCoeffs=F,repRep=1)
+eagle(alt,n,xFull,xNull,max.its=1000,tol=10.0,debug=F,learn.rev=T,rev=1.0,...
+	traceEvery=1,rev.model="global",null.first=T,coeff.reg=0.0,...
+	return.aux.variables=F,storeAllCoeffs=F,repRep=1)
 }
 %- maybe also 'usage' for other objects documented here.
 \arguments{

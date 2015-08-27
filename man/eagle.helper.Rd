@@ -16,7 +16,7 @@ eagle.helper(alt,n,xFull,xNull,s)
   \item{n}{ list (over exonics SNPs) of total read counts}
   \item{xFull}{list of design matrices for the alternative hypothesis (e.g. including environment)}
   \item{xNull}{list of design matrices for the null hypothesis} 
-  \item{settings}{list of settings. Create using default.settings() and then customize. }
+  \item{settings}{list of settings. Create using \code{\link{eagle.settings}}() and then customize. }
 }
 \details{
 %%  ~~ If necessary, more details than the description above ~~
