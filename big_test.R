@@ -24,7 +24,7 @@ for (i in 1:n.loci){
     hap2=runif(n.samples)<maf
     het[,i]=xor(hap1,hap2)
     totalreads[,i]=rpois(n.samples,100*rgamma(n.samples,shape=2,rate=2)) # sample read depth from overdispersed Poisson (NB?)
-    logOdds=.3+trueBeta[i]*environmentVar+.3*rnorm(n.samples)
+    logOdds=.3+trueBeta[i]*environmentVar+runif(1,min=.1,max=.5)*rnorm(n.samples)
     if (runif(1)<.5){ # add eQTL
       eSNPmaf=runif(1)*.4+.1 
       ehap1=runif(n.samples)<eSNPmaf 
@@ -44,22 +44,29 @@ n.list <- list()
 x.null <- list()
 x.full <- list()
 original.index <- list()
-count.cutoff=3
-prop.cutoff=0.01
-prop.mono.cutoff=.5
+
+# for defining monoallelic expression
+count.cutoff=3 # monoallelic if fewer reads than this...
+prop.cutoff=0.01 # ...or lower proportion than this mapping to one allele
+prop.mono.cutoff=.5 # maximum proportion of hets who are allowed to how monoallelic expression
+minSampleSize=20
+minGroupSize=10 # minimum testable individuals in an environmental group (e.g. smokers)
+minModel=T # whether to use the symmetrized version of the likeihood
+
 non.problematic.counter=1
+# iterate over exonic SNPs
 for (snp.index in 1:n.loci) {
   if (snp.index %% 1000 == 0) print(snp.index)
   valid=het[,snp.index]==1 & totalreads[,snp.index]>5
   # check we have at least 20 valid samples
-  if (sum(valid)<20)
+  if (sum(valid)<minSampleSize)
     next
   a=alt[valid,snp.index]
   r=ref[valid,snp.index]
   heteq= eqtlGenotypes[valid,snp.index]==1
   x=environmentVar[valid]
   # check not too many are in one group (e.g. female, non-smokers)
-  if ((length(x)-max(table(x)))<10) 
+  if ((length(x)-max(table(x)))<minGroupSize) 
     next
   n=a+r
   # check there isn't too much mono-allelic expression
@@ -67,7 +74,7 @@ for (snp.index in 1:n.loci) {
   is.mono=(min.a.r<count.cutoff)|((as.double(min.a.r)/n)<prop.cutoff)
   if (mean(is.mono)>prop.mono.cutoff)
     next
-  alt.list[[non.problematic.counter]]=pmin(a,n-a) # min model
+  alt.list[[non.problematic.counter]]=if (minModel) pmin(a,n-a) else a
   n.list[[non.problematic.counter]]=n
   original.index[[non.problematic.counter]]=snp.index
   num.samples=length(x)
@@ -106,7 +113,8 @@ s$rev.model=2
 s$normalised.depth=scale(log10(unlist(lapply(n,mean)))) # only required for rev.model=3
 s$max.iterations=10000
 s$convergence.tolerance=.001
-s$coeff.regulariser=0.0
+s$coeff.regulariser=0.1
+s$learn.rev=T
 
 # learnt parameters from the DGN dataset
 s$rep.global.shape=1.0
@@ -114,12 +122,9 @@ s$rep.global.rate=0.0033
 
 s$traceEvery=1
 
-system.time( res <- eagle.helper(alt.list,n.list,x.full,x.null,s) ) # 4s
+system.time( res <- eagle.helper(alt.list,n.list,x.full,x.null,s) ) 
 
 cat("p-values for true hits:",res$p.values[trueBetaAtTested!=0],"\n")
 cat("true hit betas: ",trueBetaAtTested[trueBetaAtTested!=0],"\n")
 
 hist( res$p.values[ trueBetaAtTested==0.0 ], main="p values for null sites")
-
-i=which.max(trueBetaAtTested)
-plot(x.full[[i]][,1],alt.list[[i]]/n.list[[i]],ylim=c(0,1))
