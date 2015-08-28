@@ -16,7 +16,7 @@ environmentVar=rnorm(n.samples) # values of the environment variable, e.g. age
 # make "true" regression coefficients, most of which are 0
 trueBeta=ifelse(runif(n.loci) < 0.05, rgamma(n.loci,shape=2,rate=1), 0.0) 
 logistic=function(x) 1/(1+exp(-x))
-.tmp = for (i in 1:n.loci){
+for (i in 1:n.loci){
     maf=runif(1)*.4+.1 # MAF between .1 and .5 for this locus
     # sample which individuals are heterozygous at this locus assuming HWE
     hap1=runif(n.samples)<maf 
@@ -26,20 +26,20 @@ logistic=function(x) 1/(1+exp(-x))
     ones=numeric(numHets)+1.0 
     x=environmentVar[hets]
     xFull[[i]]=cbind(x,ones) # design matrix at this locus for alternative ("full") model
-    xNull[[i]]= cbind(ones) # matrix(0,ncol=0,nrow=numHets) # # design matrix at this locus for null model
+    xNull[[i]]=cbind(ones) # # design matrix at this locus for null model
     n[[i]]=rpois(numHets,100*rgamma(numHets,shape=2,rate=2)) # sample read depth from overdispersed Poisson (NB?)
     n[[i]][ n[[i]]<20 ]=20
     p=logistic(trueBeta[i]*x+.3*rnorm(numHets)) # sample underlying probabilities, with overdispersion
     alt[[i]]=rbinom(numHets,n[[i]],p) # sample alternative counts
-    #for (j in 1:numHets) # "min" model: doesn't work well with the way I sample betas here
-    #    alt[[i]][j]=min(alt[[i]][j],n[[i]][j]-alt[[i]][j])
+    # "min" model: doesn't work well with the way I sample betas (and having no intercept)
+    # alt[[i]]=pmin(alt[[i]],n[[i]]-alt[[i]])
 }
 
 #---------------- run the model --------------------------
 s=eagle.settings()
 s$debug=F
 #s$rev.model=as.integer(3) # local regression
-s$rev.model=as.integer(2)
+s$rev.model=2
 s$normalised.depth=scale(log10(unlist(lapply(n,mean)))) # only required for rev.model=3
 s$max.iterations=10000
 s$convergence.tolerance=.001
