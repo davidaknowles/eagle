@@ -8,11 +8,14 @@ set.seed(1) # for reproducibility
 #-------------- generate some synthetic data -------------------------
 n.loci=300 # number of loci
 n.samples=200 # number of individuals
+
+# to run on your own data you need to generate the following matrices: 
 alt=matrix(NA,n.samples,n.loci) # matrix of alternative counts
 totalreads=matrix(NA,n.samples,n.loci) # matrix of total counts
 het=matrix(NA,n.samples,n.loci) # matrix of which individuals are hets at each locus
 environmentVar=runif(n.samples) # values of the environment variable, e.g. age
 eqtlGenotypes=matrix(NA,n.samples,n.loci) # genotypes (0,1,2) of the lead eQTL for each gene
+
 # make "true" regression coefficients, most of which are 0
 #trueBeta=ifelse(runif(n.loci) < 0.05, rgamma(n.loci,shape=5,rate=5), 0.0) 
 trueBeta=ifelse(runif(n.loci) < 0.05, runif(n.loci), 0.0) 
