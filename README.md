@@ -12,7 +12,7 @@ To compile+install, in this directory run
 `R CMD INSTALL --build .`
 
 For a simple example script on synthetic data look at 
-test.R
+test.R. For a slightly more involved/realistic example, including eQTLs and realistic filtering options look at big_test.R. _
 
 eagle has been tested under the following architectures: 
 * Mac OS X Yosemite 10.10.2, R 3.1.2
