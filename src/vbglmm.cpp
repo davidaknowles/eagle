@@ -165,7 +165,7 @@ class Vbglmm {
     lb+=-.5*Erep*Eerr2+.5*Elogrep; 
     // - <log q>
     lb+=.5*(1.0+log(v)); 
-    if (isnan(lb)) ::Rf_error("Lower bound is nan"); 
+    if (std::isnan(lb)) ::Rf_error("Lower bound is nan"); 
     return lb; 
   }
 
@@ -278,7 +278,7 @@ class Vbglmm {
     // update a
     //double check=.5*a_ns*a_ns*v+log1plusexp(m+(1.0-2.0*a_ns)*v*.5); 
     a[locus_index][sample_index]=logistic(m+(1.0-2.0*a_ns)*v*.5);
-    if ( isnan( a[locus_index][sample_index] ) ) ::Rf_error("Auxiliary variable a is nan"); 
+    if ( std::isnan( a[locus_index][sample_index] ) ) ::Rf_error("Auxiliary variable a is nan"); 
     double old_lb = new_local_bound; 
     new_local_bound=local_bound(locus_index, sample_index, regression_mean, local_rep, log_local_rep);  
 
@@ -511,8 +511,8 @@ class Vbglmm {
 	if (1) { // (it<100){ // DEBUGDEBUG
 	  rep_slope=temp[0];
 	  rep_intercept=temp[1];
-	}
-	if (isnan(rep_slope)) {
+	} 
+	if (std::isnan(rep_slope)) {
 	  Rcout << xx(0,0) << " " << xx(1,0) << " " << xx(1,1) << " " << xm[0] << " " << xm[1] << endl ;
 	  ::Rf_error("Slope is nan");
 	}
