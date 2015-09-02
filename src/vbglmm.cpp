@@ -117,7 +117,6 @@ class Vbglmm {
   bool store_all_coeffs;
   double coeff_regulariser;
   NumericVector normalised_depth; 
-  double final_rep_rep; 
   NumericVector rep_shapes;
   NumericVector rep_rates; 
 
@@ -307,7 +306,7 @@ class Vbglmm {
     total_terms[locus_index]=num_samples; 
   }
 
-  double update_locus(int locus_index, NumericVector &expected_err, NumericVector &total_terms){
+  void update_locus(int locus_index, NumericVector &expected_err, NumericVector &total_terms){
     double local_rep, log_local_rep;
     double old_lb ; 
     switch (rev_model){
@@ -348,7 +347,7 @@ class Vbglmm {
 	Rcout << "Warning: lb got worse after optimizing q(g) and a, old:" << old_lb << " new: " << new_lb << endl;   	
       old_lb=new_lb; 
     }
-    if (learn_betas & num_cov>0) { // && it < 100){ // DEBUGDEBUG
+    if (learn_betas & (num_cov>0)) { // && it < 100){ // DEBUGDEBUG
       NumericVector old_beta=beta[locus_index];
       // update beta and means
       // TODO: might want to check if determinant is too close to zero

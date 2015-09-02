@@ -130,4 +130,4 @@ system.time( res <- eagle.helper(alt.list,n.list,x.full,x.null,s) )
 cat("p-values for true hits:",res$p.values[trueBetaAtTested!=0],"\n")
 cat("true hit betas: ",trueBetaAtTested[trueBetaAtTested!=0],"\n")
 
-hist( res$p.values[ trueBetaAtTested==0.0 ], main="p values for null sites")
+hist( res$p.values[ trueBetaAtTested==0.0 ], xlab="p-value", main="p-values for null sites")
