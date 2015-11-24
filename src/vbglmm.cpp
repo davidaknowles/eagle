@@ -61,7 +61,7 @@ double fit_gamma(double s){
     shape=shape- (log(shape)-::Rf_digamma(shape)-s)/(1.0/shape - ::Rf_trigamma(shape)); 
     counter++;
     if (counter > 1000){
-      cerr << "Warning: fit_gamma(" << s << ") not converging, returning " << init_shape << endl; 
+      Rcerr << "Warning: fit_gamma(" << s << ") not converging, returning " << init_shape << endl; 
       return init_shape;
     }
   }
@@ -538,7 +538,7 @@ class Vbglmm {
 	if (debug && ((lb+1.0e-3)<old_lb)) Rcout << "Warning: lb got worse after optimizing reprep, old:" << old_lb << " new:" << lb << endl; 
       }
       
-      if (!isfinite(random_effect_precision)) { cerr << "err " << expected_err << " n " << total_terms << endl; ::Rf_error("Random effect precision is nan"); }
+      if (!isfinite(random_effect_precision)) { Rcerr << "err " << expected_err << " n " << total_terms << endl; ::Rf_error("Random effect precision is nan"); }
       
       if (debug && ((lb+1.0e-3)<old_lb)) Rcout << "Warning: lb got worse after optimizing random effect var, old:" << old_lb << " new:" << lb << endl; 
     } else {
@@ -750,7 +750,7 @@ public:
 	LDLT<MatrixXd> llt(xxX);
 	double det=MatrixXd(llt.matrixL()).diagonal().prod(); 
 	det = det * det; 
-	if (det < 1e-8) cerr << "Warning: X is ill conditioned for locus " << locus_index << endl; 
+	if (det < 1e-8) Rcerr << "Warning: X is ill conditioned for locus " << locus_index << endl; 
 	choleskys.push_back(llt); 
       } else {
 	LDLT<MatrixXd> lltnull; 

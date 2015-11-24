@@ -1,8 +1,5 @@
 packageName="eagle"
 
-xToListList = function(x) {
-    lapply( x, function(g) lapply( as.list(1:nrow(g)), function(h) g[h,] ))
-}
 
 # alt: list (over exonic SNPs) of alternative read counts
 # n: list (over exonics SNPs) of total read counts
@@ -93,6 +90,13 @@ eagle.helper = function(alt,n,xFull,xNull,s){
         s$normalised.depth=scale(log10(unlist(lapply(n,mean))))
 
   stopifnot( !is.nan(s$normalised.depth))
+  
+  if (any(sapply(alt,function(g) any(is.na(g))))) stop("NAs not allowed in alt, please remove these elements.")
+  if (any(sapply(n,function(g) any(is.na(g))))) stop("NAs not allowed in n, please remove these elements.")
+  if (any(sapply(xFull,function(g) any(is.na(g))))) stop("NAs not allowed in xFull, please remove these elements.")
+  if (any(sapply(xNull,function(g) any(is.na(g))))) stop("NAs not allowed in xNull, please remove these elements.")
+
+  xToListList = function(x) lapply( x, function(g) lapply( as.list(1:nrow(g)), function(h) g[h,] ))
     
   xFullList=xToListList(xFull)
   xNullList=xToListList(xNull)
