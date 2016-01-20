@@ -90,11 +90,34 @@ eagle.helper = function(alt,n,xFull,xNull,s){
         s$normalised.depth=scale(log10(unlist(lapply(n,mean))))
 
   stopifnot( !is.nan(s$normalised.depth))
-  
+
+  stopifnot( is.list(alt), is.list(n), is.list(xFull), is.list(xNull) )
+    
   if (any(sapply(alt,function(g) any(is.na(g))))) stop("NAs not allowed in alt, please remove these elements.")
   if (any(sapply(n,function(g) any(is.na(g))))) stop("NAs not allowed in n, please remove these elements.")
   if (any(sapply(xFull,function(g) any(is.na(g))))) stop("NAs not allowed in xFull, please remove these elements.")
   if (any(sapply(xNull,function(g) any(is.na(g))))) stop("NAs not allowed in xNull, please remove these elements.")
+
+  stopifnot( length(alt)==length(n), length(n)==length(xFull), length(xFull)==length(xNull))
+  stopifnot( sapply(alt,length)==sapply(n,length), sapply(n,length)==sapply(xFull,nrow), sapply(xFull,nrow)==sapply(xNull,nrow) )
+
+  stopifnot( all(sapply(alt,class)  %in% c("integer","numeric") ), all(sapply(n,class) %in% c("integer","numeric") ) )
+  stopifnot( all(sapply(xFull,class)=="matrix" ), all(sapply(xNull,class)=="matrix") )
+
+  if (any( sapply(xFull,ncol) <= sapply(xNull,ncol) )) warning("Some xFull matrices have less than or equal columns compared to xNull") 
+  
+  stopifnot( all(sapply(alt,mode)=="numeric") )
+  stopifnot( all(sapply(n,mode)=="numeric") )
+  stopifnot( all(sapply(xFull,mode)=="numeric") )
+  stopifnot( all(sapply(xNull,mode)=="numeric") ) 
+
+  problem_loci=which( sapply(xNull, function(g) det( t(g) %*% g )==0.0) )
+  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xNull)=0 at ", problem_loci ) )
+  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xNull)=0 at ", problem_loci ) )    
+
+  problem_loci=which( sapply(xFull, function(g) det( t(g) %*% g )==0.0) )
+  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xFull)=0 at ", problem_loci ) )
+  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xFull)=0 at ", problem_loci ) )    
 
   xToListList = function(x) lapply( x, function(g) lapply( as.list(1:nrow(g)), function(h) g[h,] ))
     
