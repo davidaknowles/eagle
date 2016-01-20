@@ -112,12 +112,12 @@ eagle.helper = function(alt,n,xFull,xNull,s){
   stopifnot( all(sapply(xNull,mode)=="numeric") ) 
 
   problem_loci=which( sapply(xNull, function(g) det( t(g) %*% g )==0.0) )
-  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xNull)=0 at ", problem_loci ) )
-  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xNull)=0 at ", problem_loci ) )    
+  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xNull)=0 at", paste(problem_loci, collapse=" ") ) )
+  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xNull)=0 at", paste(problem_loci, collapse=" ")  ) )    
 
   problem_loci=which( sapply(xFull, function(g) det( t(g) %*% g )==0.0) )
-  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xFull)=0 at ", problem_loci ) )
-  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xFull)=0 at ", problem_loci ) )    
+  if (length(problem_loci)>0 & s$coeff.regulariser==0.0) stop( paste( "Det(xFull)=0 at", paste(problem_loci, collapse=" ") ) )
+  if (length(problem_loci)>0 & s$coeff.regulariser>0.0) warning( paste( "Det(xFull)=0 at", paste(problem_loci, collapse=" ")  ) )    
 
   xToListList = function(x) lapply( x, function(g) lapply( as.list(1:nrow(g)), function(h) g[h,] ))
     
