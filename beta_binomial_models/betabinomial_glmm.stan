@@ -1,3 +1,4 @@
+# EAGLE using a beta-binomial likelihood and with a single factor random effect term. 
 data {
   int<lower=0> N; // number of samples
   int<lower=0> K; // number of groups

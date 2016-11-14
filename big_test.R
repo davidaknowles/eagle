@@ -6,7 +6,7 @@ require(eagle) # load the package
 set.seed(1) # for reproducibility
 
 #-------------- generate some synthetic data -------------------------
-n.loci=300 # number of loci
+n.loci=2000 # number of loci
 n.samples=200 # number of individuals
 
 # to run on your own data you need to generate the following matrices: 

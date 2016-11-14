@@ -1,4 +1,5 @@
-# Straightforward reimplementation of EAGLE using a beta-binomial likelihood. 
+# EAGLE alternative implementation in stan by modeling the variance of allelic expression. 
+# One SNP version. 
 data {
   int<lower=0> N; 
   int<lower=0> P;
@@ -14,16 +15,11 @@ parameters {
 }
 model {
   vector[N] xb; 
-  real a[N];
-  real b[N];
-  real p[N]; 
   xb <- x * beta;
   for (n in 1:N) {
-    p[n] <- inv_logit(xb[n]); 
-    a[n] <- conc*p[n];
-    b[n] <- conc*(1.0-p[n]);
+    real p; 
+    p <- .5 * exp(xb[n]); 
+    ys[n] ~ beta_binomial(ns[n], p , p ); 
   }
-  // beta ~ normal(0,5);
   conc ~ gamma(concShape, concRate);
-  ys ~ beta_binomial(ns, a, b);
 }

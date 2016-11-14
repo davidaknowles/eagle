@@ -59,3 +59,53 @@ cat("p-values for true hits:",res$p.values[trueBeta!=0],"\n")
 cat("true hit betas: ",trueBeta[trueBeta!=0],"\n")
 
 #hist( res$p.values[ trueBeta==0.0 ], main="p values for null sites")
+
+s$learn.rev=F
+
+totest=which(trueBeta==0)[1]
+
+scales=c(1,2,5,10,20,50,100,200,500,1000,2000,5000, 1e4)
+
+ps=unlist(foreach(scal=scales) %do% {
+  xTemp=xFull[[totest]]
+  xTemp[,1]=xTemp[,1]*scal
+  eagle.helper(list( alt[[totest]] ), list( n[[totest]] ), list( xTemp ), list( xNull[[totest]]),s)$p.values[1]
+})
+qplot(scales,ps) + scale_x_log10()+  scale_y_log10( limits=c(1e-14,1e-13))
+
+intercepts=scales
+ps=unlist(foreach(inter=intercepts) %do% {
+  xTemp=xFull[[totest]]
+  xTemp[,1]=xTemp[,1]+ inter
+  eagle.helper(list( alt[[totest]] ), list( n[[totest]] ), list( xTemp ), list( xNull[[totest]]),s)$p.values[1]
+})
+qplot(intercepts,ps) + scale_x_log10()+ scale_y_log10( limits=c(1e-14,1e-13))
+
+
+xTemp=xFull[[totest]]
+xTemp[,1]=xTemp[,1]*0.00001 + 10
+eagle.helper(list( alt[[totest]] ), list( n[[totest]] ), list( xTemp ), list( xNull[[totest]]),s)$p.values[1]
+qplot(xFull[[totest]][,1], alt[[totest]]/n[[totest]] ) + ylim(0,.5)
+
+
+unlist(foreach(i=1:100) %dopar% {
+  maf=runif(1)*.4+.1 # MAF between .1 and .5 for this locus
+  # sample which individuals are heterozygous at this locus assuming HWE
+  hap1=runif(n.samples)<maf 
+  hap2=runif(n.samples)<maf
+  hets=xor(hap1,hap2)
+  numHets=sum(hets)
+  ones=numeric(numHets)+1.0 
+  x=environmentVar[hets]
+  xFull=cbind(x,ones) # design matrix at this locus for alternative ("full") model
+  xNull=cbind(ones) # # design matrix at this locus for null model
+  n=rpois(numHets,100*rgamma(numHets,shape=2,rate=2)) # sample read depth from overdispersed Poisson (NB?)
+  n[ n<20 ]=20
+  p=logistic(5+.3*rnorm(numHets)) # sample underlying probabilities, with overdispersion
+  alt=rbinom(numHets,n,p) 
+  alt=pmin(alt,n-alt)
+  qplot(xFull[,1], alt/n ) + ylim(0,.5)
+  
+  xFull[,1]=xFull[,1]*0.00001 + 10
+  eagle.helper(list( alt ), list( n ), list( xFull ), list( xNull),s)$p.values[1]
+}) -> p
