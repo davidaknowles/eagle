@@ -1,7 +1,7 @@
 eagle: Environment-ASE through Generalized LinEar modeling
 ====
 
-EAGLE uses Alle Specific Expression (ASE) quantified using RNA-seq to detect gene by environment (GxE) interactions. The underlying idea is that observing an association between the level of allelic imbalance at an exonic SNP, and an environmental factor, is evidence of a *cis*-regulatory element modulating the transcriptomic response to the environmental perturbation. 
+EAGLE is an R package which uses Alle Specific Expression (ASE) quantified via RNA-seq to detect gene by environment (GxE) interactions. The underlying idea is that observing an association between the level of allelic imbalance at an exonic SNP, and an environmental factor, is evidence of a *cis*-regulatory element modulating the transcriptomic response to the environmental perturbation. The underlying statistical model is a binomial [Generalized Linear Mixed Model](https://en.wikipedia.org/wiki/Generalized_linear_mixed_model), with a random effect term used to account for count overdisperion. Model fitting is achieved using [Non-conjugate Variational Message Passing](https://papers.nips.cc/paper/4407-non-conjugate-variational-message-passing-for-multinomial-and-binary-regression). 
 
 The paper describing EAGLE has now been published:
 
