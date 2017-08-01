@@ -11,6 +11,7 @@ The paper describing EAGLE has now been published:
 
 An early [bioRxiv preprint](http://biorxiv.org/content/early/2015/09/13/025874) is available. 
 
+The code is on [github](https://github.com/davidaknowles/eagle). 
 
 ## System requirements
 
