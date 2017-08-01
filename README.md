@@ -1,7 +1,5 @@
-eagle
+eagle: Environment-ASE through Generalized LinEar modeling
 ====
-
-Environment-ASE through Generalized LinEar modeling
 
 EAGLE uses Alle Specific Expression (ASE) quantified using RNA-seq to detect gene by environment (GxE) interactions. The underlying idea is that observing an association between the level of allelic imbalance at an exonic SNP, and an environmental factor, is evidence of a *cis*-regulatory element modulating the transcriptomic response to the environmental perturbation. 
 
