@@ -28,6 +28,7 @@ You will need the RcppEigen R package installed. In R run
 `install.packages("RcppEigen")`
 
 To download the code
+
 `git clone git@github.com:davidaknowles/eagle.git`
 
 To compile+install, in this directory run
