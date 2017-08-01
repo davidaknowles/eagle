@@ -5,7 +5,7 @@ Environment-ASE through Generalized LinEar modeling
 
 The paper describing EAGLE has now been published:
 
-** Allele-specific expression reveals interactions between genetic variation and environment.**
+**Allele-specific expression reveals interactions between genetic variation and environment.**
 
 *Knowles, D. A; Davis, J. R; Edgington, H.; Raj, A.; Favé, M.; Zhu, X.; Potash, J. B; Weissman, M. M; Shi, J.; Levinson, D.; Awadalla, P.; Mostafavi, S.; Montgomery, S. B; and Battle, A.*
 [Nature Methods](http://www.nature.com/nmeth/journal/vaop/ncurrent/full/nmeth.4298.html) 2017.
