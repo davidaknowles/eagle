@@ -3,13 +3,17 @@ eagle
 
 Environment-ASE through Generalized LinEar modeling
 
-The paper is on bioRxiv:
+The paper describing EAGLE has now been published:
 
-**Allele-specific expression reveals interactions between genetic variation and environment**
-*David A Knowles, Joe R Davis, Anil Raj, Xiaowei Zhu, James B Potash, Myrna M Weissman, Jianxin Shi, Douglas F Levinson, Sara Mostafavi, Stephen B Montgomery, Alexis Battle*
-http://biorxiv.org/content/early/2015/09/13/025874
+** Allele-specific expression reveals interactions between genetic variation and environment.
+*Knowles, D. A; Davis, J. R; Edgington, H.; Raj, A.; Favé, M.; Zhu, X.; Potash, J. B; Weissman, M. M; Shi, J.; Levinson, D.; Awadalla, P.; Mostafavi, S.; Montgomery, S. B; and Battle, A.*
+[Nature Methods](http://www.nature.com/nmeth/journal/vaop/ncurrent/full/nmeth.4298.html) 2017.
 
-Note you will need the RcppEigen R package installed. In R run
+An early [bioRxiv preprint](http://biorxiv.org/content/early/2015/09/13/025874) is available. 
+
+## Installation
+
+You will need the RcppEigen R package installed. In R run
 
 `install.packages("RcppEigen")`
 
@@ -17,8 +21,17 @@ To compile+install, in this directory run
 
 `R CMD INSTALL --build .`
 
-For a simple example script on synthetic data look at 
-test.R. For a slightly more involved/realistic example, including eQTLs and realistic filtering options look at big_test.R. _
+Alternatively run 
+```
+# require(devtools)
+devtools::install_github("davidaknowles/eagle")
+```
+
+## Usage
+
+For a simple example script on synthetic data look at `test.R`. For a slightly more involved/realistic example, including eQTLs and realistic filtering options look at `big_test.R`. _
+
+## System requirements
 
 eagle has been tested under the following architectures: 
 * Mac OS X Yosemite 10.10.2, R 3.1.2
