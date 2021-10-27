@@ -102,7 +102,7 @@ eagle.helper = function(alt,n,xFull,xNull,s){
   stopifnot( sapply(alt,length)==sapply(n,length), sapply(n,length)==sapply(xFull,nrow), sapply(xFull,nrow)==sapply(xNull,nrow) )
 
   stopifnot( all(sapply(alt,class)  %in% c("integer","numeric") ), all(sapply(n,class) %in% c("integer","numeric") ) )
-  stopifnot( all(sapply(xFull,class)=="matrix" ), all(sapply(xNull,class)=="matrix") )
+#  stopifnot( all(sapply(xFull,class)=="matrix" ), all(sapply(xNull,class)=="matrix") )
 
   if (any( sapply(xFull,ncol) <= sapply(xNull,ncol) )) warning("Some xFull matrices have less than or equal columns compared to xNull") 
   
